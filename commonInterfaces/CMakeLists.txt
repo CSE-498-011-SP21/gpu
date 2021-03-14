@@ -1,0 +1,5 @@
+add_library(commonInterfacesCXX INTERFACE)
+target_include_directories(commonInterfacesCXX INTERFACE include)
+
+add_library(commonInterfacesCUDA INTERFACE)
+target_include_directories(commonInterfacesCUDA INTERFACE include includeCUDA)
