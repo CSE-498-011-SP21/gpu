@@ -2,14 +2,14 @@
  * @file
  */
 
-#include "ResultsBuffers.hh"
+#include <Communication.hh>
 
 #ifndef KVCG_BATCHDATA_HH
 #define KVCG_BATCHDATA_HH
 
 template<typename K>
 struct BatchData {
-    BatchData(int rbStart, std::shared_ptr<ResultsBuffers> &rb, int s,
+    BatchData(int rbStart, std::shared_ptr<Communication> &rb, int s,
               std::chrono::high_resolution_clock::time_point start_) : keys(s), values(s), requests(s),
                                                                        hashes(s), requestID(s),
                                                                        handleInCache(s), resBuf(rb),
@@ -28,7 +28,7 @@ struct BatchData {
     std::vector<unsigned> hashes;
     std::vector<int> requestID;
     std::vector<bool> handleInCache;
-    std::shared_ptr<ResultsBuffers> resBuf;
+    std::shared_ptr<Communication> resBuf;
     int resBufStart;
     int size;
     int idx;

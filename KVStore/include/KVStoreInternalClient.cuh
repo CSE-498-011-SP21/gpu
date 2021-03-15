@@ -94,7 +94,7 @@ private:
         ~CPUStageArgs() = default;
 
         std::vector<RequestWrapper<unsigned long long, data_t *>> req_vector;
-        std::shared_ptr<ResultsBuffers> resBuf;
+        std::shared_ptr<Communication> resBuf;
         int sizeForGPUBatches;
         std::vector<std::pair<int, unsigned>> cache_batch_correspondence;
         bool dontDoGPU;
@@ -144,7 +144,7 @@ public:
      * @param req_vector
      */
     void batch(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-               std::shared_ptr<ResultsBuffers> &resBuf,
+               std::shared_ptr<Communication> &resBuf,
                time_point startTime) {
         assert(loadBalanceSet);
 
@@ -182,7 +182,7 @@ public:
     }
 
     void batch_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                                  std::shared_ptr<ResultsBuffers> &resBuf,
+                                  std::shared_ptr<Communication> &resBuf,
                                   time_point startTime) {
         assert(loadBalanceSet);
 
@@ -245,7 +245,7 @@ public:
                                times);
                     } else {
                         hits.fetch_add(1, std::memory_order_relaxed);
-                        args.resBuf->response.push(Response(cache_batch_idx.first, pair.second, false));
+                        args.resBuf->send(Response(cache_batch_idx.first, pair.second, false));
                         times.push_back(std::chrono::high_resolution_clock::now());
                     }
                 } else {
@@ -260,7 +260,7 @@ public:
                                                cache_batch_idx.second,
                                                *model);
 
-                            args.resBuf->response.push(Response(cache_batch_idx.first, value, false));
+                            args.resBuf->send(Response(cache_batch_idx.first, value, false));
                             break;
                         case REQUEST_REMOVE:
                             //std::cerr << "RM request\n";
@@ -270,7 +270,7 @@ public:
                                                   *model);
                             hits++;
                             asm volatile("":: : "memory");
-                            args.resBuf->response.push(Response(cache_batch_idx.first, value, false));
+                            args.resBuf->send(Response(cache_batch_idx.first, value, false));
                             break;
                     }
                     times.push_back(std::chrono::high_resolution_clock::now());
@@ -320,14 +320,14 @@ public:
         int batchSizeUsed = std::min(THREADS_PER_BLOCK * BLOCKS,
                                      (int) (tmpSize / THREADS_PER_BLOCK + 1) * THREADS_PER_BLOCK);
 
-        std::vector<std::pair<int, std::shared_ptr<ResultsBuffers>>> vecOfBufs;
+        std::vector<std::pair<int, std::shared_ptr<Communication>>> vecOfBufs;
 
         for (int enqueued = 0; enqueued < tmpSize; enqueued += batchSizeUsed) {
 
             auto gpu_batches = std::vector<BatchData<unsigned long long> *>(numslabs);
 
             for (int i = 0; i < numslabs; ++i) {
-                std::shared_ptr<ResultsBuffers> resBuf = std::make_shared<ResultsBuffers>(
+                std::shared_ptr<Communication> resBuf = std::make_shared<Communication>(
                         batchSizeUsed);
                 gpu_batches[i] = new BatchData<unsigned long long>(0,
                                                                    resBuf,
@@ -363,12 +363,12 @@ public:
 
         }
 
-        for (std::pair<int, std::shared_ptr<ResultsBuffers>> &r : vecOfBufs) {
+        for (std::pair<int, std::shared_ptr<Communication>> &r : vecOfBufs) {
 
             int count = 0;
             do {
                 Response response;
-                if (r.second->response.try_pop(response)) {
+                if (r.second->try_recv(response)) {
                     count++;
                 }
             } while (count < r.first);
@@ -473,7 +473,7 @@ private:
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && UseGPU)> * = nullptr>
     inline int
     route(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-          std::shared_ptr<ResultsBuffers> &resBuf,
+          std::shared_ptr<Communication> &resBuf,
           std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
           std::vector<BatchData<unsigned long long> *> &gpu_batches, time_point startTime) {
 
@@ -511,7 +511,7 @@ private:
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && !UseGPU)> * = nullptr>
     inline int
     route(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-          std::shared_ptr<ResultsBuffers> &resBuf,
+          std::shared_ptr<Communication> &resBuf,
           std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
           std::vector<BatchData<unsigned long long> *> &gpu_batches, time_point startTime) {
 
@@ -531,7 +531,7 @@ private:
     template<bool UseCache_ = UseCache, typename std::enable_if_t<!UseCache_> * = nullptr>
     inline int
     route(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-          std::shared_ptr<ResultsBuffers> &resBuf,
+          std::shared_ptr<Communication> &resBuf,
           std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
           std::vector<BatchData<unsigned long long> *> &gpu_batches, time_point startTime) {
 
@@ -565,7 +565,7 @@ private:
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && UseGPU)> * = nullptr>
     inline int
     route_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                             std::shared_ptr<ResultsBuffers> &resBuf,
+                             std::shared_ptr<Communication> &resBuf,
                              std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
                              std::vector<BatchData<unsigned long long> *> &gpu_batches, time_point startTime) {
 
@@ -590,7 +590,7 @@ private:
                     gpu_batches[gpuToUse]->requestID[idx] = i;
                 }
             } else if (req.requestInteger == REQUEST_REMOVE || req.requestInteger == REQUEST_INSERT) {
-                resBuf->response.push(Response(i, nullptr, true));
+                resBuf->send(Response(i, nullptr, true));
             }
         }
 
@@ -606,7 +606,7 @@ private:
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && !UseGPU)> * = nullptr>
     inline int
     route_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                             std::shared_ptr<ResultsBuffers> &resBuf,
+                             std::shared_ptr<Communication> &resBuf,
                              std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
                              std::vector<BatchData<unsigned long long> *> &gpu_batches, time_point startTime) {
 
@@ -616,7 +616,7 @@ private:
                 unsigned h = hfn(req.key);
                 cache_batch_corespondance.push_back({i, h});
             } else if (req.requestInteger == REQUEST_REMOVE || req.requestInteger == REQUEST_INSERT) {
-                resBuf->response.push(Response(i, nullptr, true));
+                resBuf->send(Response(i, nullptr, true));
             }
         }
 
@@ -628,7 +628,7 @@ private:
     template<bool UseCache_ = UseCache, typename std::enable_if_t<!UseCache_> * = nullptr>
     inline int
     route_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                             std::shared_ptr<ResultsBuffers> &resBuf,
+                             std::shared_ptr<Communication> &resBuf,
                              std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
                              std::vector<BatchData<unsigned long long> *> &gpu_batches, time_point startTime) {
 
@@ -650,7 +650,7 @@ private:
                 gpu_batches[gpuToUse]->requestID[idx] = i;
 
             } else if (req.requestInteger == REQUEST_REMOVE || req.requestInteger == REQUEST_INSERT) {
-                resBuf->response.push(Response(i, nullptr, true));
+                resBuf->send(Response(i, nullptr, true));
             }
         }
 
@@ -674,7 +674,7 @@ private:
             for (int i = 0; i < numslabs; ++i) {
 
                 for (int idx = 0; idx < gpu_batches[i]->idx; idx++) {
-                    gpu_batches[i]->resBuf->response.push(Response(gpu_batches[i]->requestID[idx], nullptr, true));
+                    gpu_batches[i]->resBuf->send(Response(gpu_batches[i]->requestID[idx], nullptr, true));
                 }
 
                 delete gpu_batches[i];
@@ -689,7 +689,7 @@ private:
     // normal
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<UseCache && UseGPU_> * = nullptr>
     inline void setUpMissBatches(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                                 std::shared_ptr<ResultsBuffers> &resBuf,
+                                 std::shared_ptr<Communication> &resBuf,
                                  std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                                  time_point startTime) {
         for (int i = 0; i < numslabs; ++i) {
@@ -701,7 +701,7 @@ private:
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<
             (UseCache && !UseGPU_) || (!UseCache && UseGPU_)> * = nullptr>
     inline void setUpMissBatches(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                                 std::shared_ptr<ResultsBuffers> &resBuf,
+                                 std::shared_ptr<Communication> &resBuf,
                                  std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                                  time_point startTime) {}
 
@@ -710,7 +710,7 @@ private:
     inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx,
                        std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                        RequestWrapper<unsigned long long, data_t *> &req_vector_elm,
-                       std::shared_ptr<ResultsBuffers> &resBuf,
+                       std::shared_ptr<Communication> &resBuf,
                        std::vector<time_point> &times) {
         int gpuToUse = cache_batch_idx.second % numslabs;
         int idx = gpu_batches2[gpuToUse]->idx;
@@ -728,10 +728,10 @@ private:
     inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx,
                        std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                        RequestWrapper<unsigned long long, data_t *> &req_vector_elm,
-                       std::shared_ptr<ResultsBuffers> &resBuf,
+                       std::shared_ptr<Communication> &resBuf,
                        std::vector<time_point> &times) {
         hits.fetch_add(1, std::memory_order_relaxed);
-        resBuf->response.push(Response(cache_batch_idx.first, nullptr, false));
+        resBuf->send(Response(cache_batch_idx.first, nullptr, false));
         times.push_back(std::chrono::high_resolution_clock::now());
     }
 
@@ -740,7 +740,7 @@ private:
     inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx,
                        std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                        RequestWrapper<unsigned long long, data_t *> &req_vector_elm,
-                       std::shared_ptr<ResultsBuffers> &resBuf,
+                       std::shared_ptr<Communication> &resBuf,
                        std::vector<time_point> &times) {
         // should never be called
         assert(false);
@@ -752,7 +752,7 @@ private:
     inline void
     forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                      int &sizeForGPUBatches,
-                     std::shared_ptr<ResultsBuffers> &resBuf) {
+                     std::shared_ptr<Communication> &resBuf) {
         if (!dontDoGPU) {
             for (int i = 0; i < numslabs; ++i) {
                 if (gpu_batches2[i]->idx > 0) {
@@ -767,7 +767,7 @@ private:
         } else {
             for (int i = 0; i < numslabs; ++i) {
                 for (int idx = 0; idx < gpu_batches2[i]->idx; idx++) {
-                    gpu_batches2[i]->resBuf->response.push(Response(gpu_batches2[i]->requestID[idx], nullptr, true));
+                    gpu_batches2[i]->resBuf->send(Response(gpu_batches2[i]->requestID[idx], nullptr, true));
                 }
 
                 delete gpu_batches2[i];
@@ -780,14 +780,14 @@ private:
     inline void
     forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                      int &sizeForGPUBatches,
-                     std::shared_ptr<ResultsBuffers> &resBuf) {}
+                     std::shared_ptr<Communication> &resBuf) {}
 
     // gpu only
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<!UseCache && UseGPU_> * = nullptr>
     inline void
     forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<unsigned long long> *> &gpu_batches2,
                      int &sizeForGPUBatches,
-                     std::shared_ptr<ResultsBuffers> &resBuf) {
+                     std::shared_ptr<Communication> &resBuf) {
         // should never be called
         assert(false);
     }

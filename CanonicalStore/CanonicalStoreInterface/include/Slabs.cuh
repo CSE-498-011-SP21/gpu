@@ -3,7 +3,7 @@
  */
 
 #include <gpuSystemConfig.cuh>
-#include <BatchData.hh>
+#include <BatchData.cuh>
 #include "StatData.cuh"
 #include <Cache.hh>
 
@@ -151,7 +151,7 @@ struct Slabs {
                                                         auto value = _cache->missCallback(
                                                                 wb.second->keys[i], values[wb.first + i], wb.second->hashes[i],
                                                                 *(this->model));
-                                                        wb.second->resBuf->response.push(Response(wb.second->requestID[i], value, false));
+                                                        wb.second->resBuf->send(Response(wb.second->requestID[i], value, false));
 
                                                     } else {
                                                         data_t* value;
@@ -168,7 +168,7 @@ struct Slabs {
                                                         } else {
                                                             value = nullptr;
                                                         }
-                                                        wb.second->resBuf->response.push(Response(wb.second->requestID[i], value, false));
+                                                        wb.second->resBuf->send(Response(wb.second->requestID[i], value, false));
                                                     }
                                                 }
                                                 delete wb.second;

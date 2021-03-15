@@ -16,7 +16,7 @@ using Model = kvgpu::AnalyticalModel<unsigned long long>;
 //#else
 //using Model = kvgpu::SimplModel<unsigned long long>;
 //#endif
-using RB = std::shared_ptr<ResultsBuffers>;
+using RB = std::shared_ptr<Communication>;
 
 int totalBatches = 10000;
 int BATCHSIZE = 512;
@@ -200,14 +200,14 @@ int main(int argc, char **argv) {
             retry = false;
             loadBalanceSet = true;
 
-            auto rb = std::make_shared<ResultsBuffers>(sconf.batchSize);
+            auto rb = std::make_shared<Communication>(sconf.batchSize);
             auto start = std::chrono::high_resolution_clock::now();
             client->batch(b, rb, start);
 
             int count = 0;
             do {
                 Response response;
-                if (rb->response.try_pop(response)) {
+                if (rb->try_recv(response)) {
                     count++;
                     if (response.retry) {
                         retry = true;
@@ -236,7 +236,7 @@ int main(int argc, char **argv) {
 
             init_loadbalance(sconf.cpu_threads);
 
-            std::shared_ptr<ResultsBuffers> lastResBuf = nullptr;
+            std::shared_ptr<Communication> lastResBuf = nullptr;
 
             while (!reclaim) {
                 std::pair<BatchWrapper, RB> p;
@@ -268,7 +268,7 @@ int main(int argc, char **argv) {
             int count = 0;
             do {
                 Response response;
-                if (lastResBuf->response.try_pop(response)) {
+                if (lastResBuf->try_recv(response)) {
                     count++;
                 }
             } while (count < sconf.batchSize);
@@ -319,7 +319,7 @@ int main(int argc, char **argv) {
                 std::cerr << "Changed " << time * 1e3 << "\n";
             }*/
 
-            auto rb = std::make_shared<ResultsBuffers>(sconf.batchSize);
+            auto rb = std::make_shared<Communication>(sconf.batchSize);
 
             std::pair<BatchWrapper, RB> p = {
                     generateWorkloadBatch(&tseed, sconf.batchSize),
@@ -339,7 +339,7 @@ int main(int argc, char **argv) {
                     std::cerr << "Changed\n";
                 }*/
 
-                auto rb = std::make_shared<ResultsBuffers>(sconf.batchSize);
+                auto rb = std::make_shared<Communication>(sconf.batchSize);
 
                 std::pair<BatchWrapper, RB> p = {
                         generateWorkloadBatch(&tseed, sconf.batchSize),

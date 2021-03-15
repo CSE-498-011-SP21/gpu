@@ -20,11 +20,11 @@ public:
     virtual ~GeneralClient() {}
 
     virtual void batch(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                       std::shared_ptr<ResultsBuffers> resBuf,
+                       std::shared_ptr<Communication> resBuf,
                        std::chrono::high_resolution_clock::time_point startTime) = 0;
 
     virtual void batch_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                                          std::shared_ptr<ResultsBuffers> resBuf,
+                                          std::shared_ptr<Communication> resBuf,
                                           std::chrono::high_resolution_clock::time_point startTime) = 0;
 
 
@@ -107,13 +107,13 @@ public:
     }
 
     void batch(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-               std::shared_ptr<ResultsBuffers> resBuf,
+               std::shared_ptr<Communication> resBuf,
                std::chrono::high_resolution_clock::time_point startTime) {
         client->batch(req_vector, resBuf, startTime);
     }
 
     void batch_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
-                                  std::shared_ptr<ResultsBuffers> resBuf,
+                                  std::shared_ptr<Communication> resBuf,
                                   std::chrono::high_resolution_clock::time_point startTime) {
         client->batch_drop_modifications(req_vector, resBuf, startTime);
     }

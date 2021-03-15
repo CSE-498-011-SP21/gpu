@@ -23,6 +23,8 @@ add_subdirectory(Model)
 
 add_subdirectory(HotCache)
 
+add_subdirectory(Communication)
+
 add_subdirectory(CanonicalStore)
 
 add_subdirectory(KVStore)
