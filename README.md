@@ -2,6 +2,14 @@
 
 KVCG is a cooperative GPU-CPU key value store.
 
+## Dependencies
+
+- TBB
+- Boost
+- Google Test
+- CUDA 11.2
+- Support for C++17
+
 ## Building
 
 This will build the code and run sanity checks.
@@ -17,3 +25,4 @@ make -j
 ctest
 ```
 
+You can also build with the dockerfile.

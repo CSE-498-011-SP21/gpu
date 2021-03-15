@@ -6,7 +6,6 @@
 #include <functional>
 #include <chrono>
 #include <tbb/concurrent_queue.h>
-#include <boost/lockfree/queue.hpp>
 
 #ifndef KVGPU_KVSTOREINTERNALCLIENT_CUH
 #define KVGPU_KVSTOREINTERNALCLIENT_CUH
