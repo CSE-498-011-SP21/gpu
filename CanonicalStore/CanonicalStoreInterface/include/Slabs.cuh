@@ -5,7 +5,7 @@
 #include <gpuSystemConfig.cuh>
 #include <BatchData.hh>
 #include "StatData.cuh"
-#include "Cache.cuh"
+#include <Cache.cuh>
 
 #ifndef KVCG_SLABS_HH
 #define KVCG_SLABS_HH

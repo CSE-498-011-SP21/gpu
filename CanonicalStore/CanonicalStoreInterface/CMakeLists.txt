@@ -1,0 +1,4 @@
+add_library(canonicalstore INTERFACE)
+target_link_libraries(canonicalstore INTERFACE lslab)
+target_link_libraries(canonicalstore INTERFACE hotcache)
+target_include_directories(canonicalstore INTERFACE include)

@@ -19,7 +19,6 @@ namespace pt = boost::property_tree;
 using BatchWrapper = std::vector<RequestWrapper<unsigned long long, data_t *>>;
 
 double zetaN = 0.1;
-std::atomic_bool flag;
 
 struct ZipfianWorkloadConfig {
     ZipfianWorkloadConfig() {
@@ -29,7 +28,6 @@ struct ZipfianWorkloadConfig {
         ops = 10000;
         keysize = 8;
         ratio = 95;
-        flag = false;
     }
 
     ZipfianWorkloadConfig(std::string filename) {
@@ -41,7 +39,6 @@ struct ZipfianWorkloadConfig {
         ops = root.get<int>("ops", 100000);
         keysize = root.get<size_t>("keysize", 8);
         ratio = root.get<int>("ratio", 95);
-        flag = false;
     }
 
 
@@ -62,24 +59,12 @@ extern "C" int getBatchesToRun() {
 }
 
 extern "C" void initWorkload() {
-    flag = false;
-    zetaN = betterstd::zeta(zipfianWorkloadConfig.theta, zipfianWorkloadConfig.range);
-}
-
-extern "C" void changeWorkload() {
-    flag = true;
+    zetaN = zipf::zeta(zipfianWorkloadConfig.theta, zipfianWorkloadConfig.range);
 }
 
 extern "C" void initWorkloadFile(std::string filename) {
-    flag = false;
     zipfianWorkloadConfig = ZipfianWorkloadConfig(filename);
-    zetaN = betterstd::zeta(zipfianWorkloadConfig.theta, zipfianWorkloadConfig.range);
-}
-
-unsigned long long genRand(unsigned *seed, int n, double zetaN, double theta, std::atomic_bool &flag) {
-    unsigned long long u = betterstd::rand_zipf_r(seed, n, zetaN, theta);
-    if (flag) u = n + 1 - u;
-    return u;
+    zetaN = zipf::zeta(zipfianWorkloadConfig.theta, zipfianWorkloadConfig.range);
 }
 
 std::vector<RequestWrapper<unsigned long long, data_t *>>
@@ -90,17 +75,14 @@ generateWorkloadZipfLargeKey(size_t keySize, int size, double theta, int n, doub
 
     for (int i = 0; i < size; i++) {
         if (rand_r(seed) % 100 < ratioOfReads) {
-            vec.push_back({(unsigned long long) genRand(seed, n, zetaN, theta, flag), nullptr,
-                           REQUEST_GET});
+            vec.push_back({(unsigned long long) zipf::rand_zipf_r(seed, n, zetaN, theta), nullptr, REQUEST_GET});
         } else {
             if (rand_r(seed) % 100 < 50) {
-                vec.push_back({(unsigned long long) genRand(seed, n, zetaN, theta, flag),
-                               new data_t(keySize),
+                vec.push_back({(unsigned long long) zipf::rand_zipf_r(seed, n, zetaN, theta), new data_t(keySize),
                                REQUEST_INSERT});
             } else {
                 vec.push_back(
-                        {(unsigned long long) genRand(seed, n, zetaN, theta, flag), nullptr,
-                         REQUEST_REMOVE});
+                        {(unsigned long long) zipf::rand_zipf_r(seed, n, zetaN, theta), nullptr, REQUEST_REMOVE});
             }
         }
 

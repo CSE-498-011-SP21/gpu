@@ -1,0 +1,2 @@
+add_library(allocator INTERFACE)
+target_include_directories(allocator INTERFACE include)

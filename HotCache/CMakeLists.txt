@@ -1,1 +1,2 @@
 add_subdirectory(KVCache)
+add_subdirectory(HotCacheInterface)

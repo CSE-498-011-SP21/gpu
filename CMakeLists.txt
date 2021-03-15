@@ -7,20 +7,14 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES OFF)
 message("USING ${CMAKE_TOOLCHAIN_FILE}")
-include(FetchContent)
-
-FetchContent_Declare(
-        betterstdlib
-        GIT_REPOSITORY git@github.com:depaulmillz/betterstdlib.git
-        GIT_TAG master
-)
-
-FetchContent_MakeAvailable(betterstdlib)
 
 find_package(Boost REQUIRED)
 find_package(TBB REQUIRED)
+find_package(GTest CONFIG REQUIRED)
 
 enable_testing()
+
+add_subdirectory(rand)
 
 add_subdirectory(commonInterfaces)
 
@@ -28,41 +22,11 @@ add_subdirectory(Model)
 
 add_subdirectory(HotCache)
 
-add_subdirectory(CannonicalStore)
+add_subdirectory(CanonicalStore)
 
 add_subdirectory(KVStore)
 
-add_executable(kvcg service/server.cu)
-target_link_libraries(kvcg PUBLIC lslab)
-target_link_libraries(kvcg PUBLIC multithreading)
-target_link_libraries(kvcg PUBLIC pthread)
-target_link_libraries(kvcg PUBLIC kvstore)
-target_link_libraries(kvcg PUBLIC tbbmalloc_proxy)
-target_link_libraries(kvcg PUBLIC Boost::boost)
-
-add_library(zipfianWorkload SHARED service/zipfianWorkload.cu)
-target_link_libraries(zipfianWorkload PRIVATE kvstore)
-target_link_libraries(zipfianWorkload PRIVATE tbbmalloc_proxy)
-target_link_libraries(zipfianWorkload PRIVATE rand)
-target_link_libraries(zipfianWorkload PRIVATE Boost::boost)
-
-add_library(zipfianWorkloadSwitch SHARED service/zipfianWorkloadSwitch.cu)
-target_link_libraries(zipfianWorkloadSwitch PRIVATE kvstore)
-target_link_libraries(zipfianWorkloadSwitch PRIVATE tbbmalloc_proxy)
-target_link_libraries(zipfianWorkloadSwitch PRIVATE rand)
-target_link_libraries(zipfianWorkloadSwitch PRIVATE Boost::boost)
-
-add_library(uniformWorkload SHARED service/uniformWorkload.cu)
-target_link_libraries(uniformWorkload PRIVATE kvstore)
-target_link_libraries(uniformWorkload PRIVATE tbbmalloc_proxy)
-target_link_libraries(uniformWorkload PRIVATE rand)
-target_link_libraries(uniformWorkload PRIVATE Boost::boost)
-
-add_library(selfsimilarWorkload SHARED service/selfsimilarWorkload.cu)
-target_link_libraries(selfsimilarWorkload PRIVATE kvstore)
-target_link_libraries(selfsimilarWorkload PRIVATE tbbmalloc_proxy)
-target_link_libraries(selfsimilarWorkload PRIVATE rand)
-target_link_libraries(selfsimilarWorkload PRIVATE Boost::boost)
+add_subdirectory(benchmark)
 
 set(KVGPU_TARGETLIST ${KVGPU_TARGETLIST} kvstore rand)
 
