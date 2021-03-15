@@ -12,18 +12,18 @@
 #ifndef KVGPU_KVSTORECLIENT_CUH
 #define KVGPU_KVSTORECLIENT_CUH
 
-template<typename K, typename M>
+template< typename M>
 class GeneralClient {
 public:
     GeneralClient() {}
 
     virtual ~GeneralClient() {}
 
-    virtual void batch(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+    virtual void batch(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
                        std::shared_ptr<ResultsBuffers<data_t>> resBuf,
                        std::chrono::high_resolution_clock::time_point startTime) = 0;
 
-    virtual void batch_drop_modifications(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+    virtual void batch_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
                                           std::shared_ptr<ResultsBuffers<data_t>> resBuf,
                                           std::chrono::high_resolution_clock::time_point startTime) = 0;
 
@@ -49,21 +49,21 @@ public:
 
 };
 
-template<typename K, typename M, typename Slab_t, bool UseCache = true, bool UseGPU = true>
+template<typename M, typename Slab_t, bool UseCache = true, bool UseGPU = true>
 struct ChooseInternalClient {
     static_assert(UseGPU || UseCache, "Need to use GPU or Use Cache");
-    using type = KVStoreInternalClient<K, M, Slab_t>;
+    using type = KVStoreInternalClient<M, Slab_t>;
 
-    static inline std::unique_ptr<type> getClient(KVStoreCtx<K, M> &ctx) {
+    static inline std::unique_ptr<type> getClient(KVStoreCtx<M> &ctx) {
         return ctx.getClient();
     };
 };
 
-template<typename K, typename M, typename Slab_t>
-struct ChooseInternalClient<K, M, Slab_t, false, true> {
-    using type = NoCacheKVStoreInternalClient<K, M, Slab_t>;
+template<typename M, typename Slab_t>
+struct ChooseInternalClient<M, Slab_t, false, true> {
+    using type = NoCacheKVStoreInternalClient<M, Slab_t>;
 
-    static inline std::unique_ptr<type> getClient(KVStoreCtx<K, M> &ctx) {
+    static inline std::unique_ptr<type> getClient(KVStoreCtx<M> &ctx) {
         return ctx.getNoCacheClient();
     };
 
@@ -71,32 +71,32 @@ struct ChooseInternalClient<K, M, Slab_t, false, true> {
 
 // true, true and false, true
 
-template<typename K, typename M, typename Slab_t>
-struct ChooseInternalClient<K, M, Slab_t, true, false> {
-    using type = JustCacheKVStoreInternalClient<K, M, Slab_t>;
+template<typename M, typename Slab_t>
+struct ChooseInternalClient<M, Slab_t, true, false> {
+    using type = JustCacheKVStoreInternalClient<M, Slab_t>;
 
-    static inline std::unique_ptr<type> getClient(KVStoreCtx<K, M> &ctx) {
+    static inline std::unique_ptr<type> getClient(KVStoreCtx<M> &ctx) {
         return ctx.getJustCacheClient();
     };
 
 };
 
-template<typename K, typename M, bool UseCache = true, bool UseGPU = true>
-class KVStoreClient : public GeneralClient<K, M> {
+template<typename M, bool UseCache = true, bool UseGPU = true>
+class KVStoreClient : public GeneralClient<M> {
 private:
-    using Slab_t = typename KVStoreCtx<K, M>::Slab_t;
-    using ChooseType = ChooseInternalClient<K, M, Slab_t, UseCache, UseGPU>;
+    using Slab_t = typename KVStoreCtx<M>::Slab_t;
+    using ChooseType = ChooseInternalClient<M, Slab_t, UseCache, UseGPU>;
     using InternalType = typename ChooseType::type;
 public:
 
     KVStoreClient() = delete;
 
-    explicit KVStoreClient(KVStoreCtx<K, M> ctx) : client(std::move(ChooseType::getClient(ctx))) {
+    explicit KVStoreClient(KVStoreCtx<M> ctx) : client(std::move(ChooseType::getClient(ctx))) {
     }
 
-    KVStoreClient(const KVStoreClient<K, M, UseCache, UseGPU> &) = delete;
+    KVStoreClient(const KVStoreClient<M, UseCache, UseGPU> &) = delete;
 
-    KVStoreClient(KVStoreClient<K, M, UseCache, UseGPU> &&other) {
+    KVStoreClient(KVStoreClient<M, UseCache, UseGPU> &&other) {
         client = std::move(other.client);
         other.client = nullptr;
     }
@@ -106,13 +106,13 @@ public:
 
     }
 
-    void batch(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+    void batch(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
                std::shared_ptr<ResultsBuffers<data_t>> resBuf,
                std::chrono::high_resolution_clock::time_point startTime) {
         client->batch(req_vector, resBuf, startTime);
     }
 
-    void batch_drop_modifications(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+    void batch_drop_modifications(std::vector<RequestWrapper<unsigned long long, data_t *>> &req_vector,
                                   std::shared_ptr<ResultsBuffers<data_t>> resBuf,
                                   std::chrono::high_resolution_clock::time_point startTime) {
         client->batch_drop_modifications(req_vector, resBuf, startTime);
@@ -160,10 +160,10 @@ private:
     std::unique_ptr<InternalType> client;
 };
 
-template<typename K, typename M>
-using NoCacheKVStoreClient = KVStoreClient<K, M, false, true>;
+template<typename M>
+using NoCacheKVStoreClient = KVStoreClient<M, false, true>;
 
-template<typename K, typename M>
-using JustCacheKVStoreClient = KVStoreClient<K, M, true, false>;
+template<typename M>
+using JustCacheKVStoreClient = KVStoreClient<M, true, false>;
 
 #endif //KVGPU_KVSTORECLIENT_CUH

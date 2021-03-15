@@ -24,36 +24,36 @@ int SLAB_SIZE = 1000000;
 const std::vector<PartitionedSlabUnifiedConfig> STANDARD_CONFIG = {{SLAB_SIZE, 0, cudaStreamDefault},
                                                                    {SLAB_SIZE, 1, cudaStreamDefault}};
 
-template<typename K, typename M>
+template<typename M>
 class KVStore {
 public:
 
-    using Slab_t = Slabs<K, M>;
+    using Slab_t = Slabs<M>;
 
-    KVStore() : cache(std::make_shared<typename Cache<K>::type>()), model(new M()) {
+    KVStore() : cache(std::make_shared<typename Cache::type>()), model(new M()) {
         slab = std::make_shared<Slab_t>(STANDARD_CONFIG, this->cache, model);
     }
 
     KVStore(const std::vector<PartitionedSlabUnifiedConfig> &conf) : cache(
-            std::make_shared<typename Cache<K>::type>()), model(new M()) {
+            std::make_shared<typename Cache::type>()), model(new M()) {
         if (!conf.empty())
             slab = std::make_shared<Slab_t>(conf, this->cache, model);
     }
 
     KVStore(const std::vector<PartitionedSlabUnifiedConfig> &conf, const std::string &filename) : cache(
-            std::make_shared<typename Cache<K>::type>()), model(new M(filename)) {
+            std::make_shared<typename Cache::type>()), model(new M(filename)) {
         if (!conf.empty())
             slab = std::make_shared<Slab_t>(conf, this->cache, model);
     }
 
     KVStore(const std::vector<PartitionedSlabUnifiedConfig> &conf, M &m) : cache(
-            std::make_shared<typename Cache<K>::type>()), model(new M(m)) {
+            std::make_shared<typename Cache::type>()), model(new M(m)) {
         if (!conf.empty())
             slab = std::make_shared<Slab_t>(conf, this->cache, model);
     }
 
 
-    KVStore(const KVStore<K, M> &other) : slab(other.slab), cache(other.cache), model(other.model) {
+    KVStore(const KVStore<M> &other) : slab(other.slab), cache(other.cache), model(other.model) {
 
     }
 
@@ -65,7 +65,7 @@ public:
         return slab;
     }
 
-    std::shared_ptr<typename Cache<K>::type> getCache() {
+    std::shared_ptr<typename Cache::type> getCache() {
         return cache;
     }
 
@@ -76,7 +76,7 @@ public:
 private:
 
     std::shared_ptr<Slab_t> slab;
-    std::shared_ptr<typename Cache<K>::type> cache;
+    std::shared_ptr<typename Cache::type> cache;
     std::shared_ptr<M> model;
 };
 

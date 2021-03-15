@@ -12,7 +12,7 @@
 
 const int MAX_ATTEMPTS = 1;
 
-template<typename K, typename M>
+template<typename M>
 struct Slabs {
 
     using V = data_t *;
@@ -20,17 +20,17 @@ struct Slabs {
 
     Slabs() = delete;
 
-    typedef tbb::concurrent_queue<BatchData<K, data_t> *> q_t;
+    typedef tbb::concurrent_queue<BatchData<unsigned long long, data_t> *> q_t;
 
     Slabs(const std::vector<PartitionedSlabUnifiedConfig> &config,
-          std::shared_ptr<typename Cache<K>::type> cache, std::shared_ptr<M> m) : done(false),
+          std::shared_ptr<typename Cache::type> cache, std::shared_ptr<M> m) : done(false),
                                                                                   mops(new tbb::concurrent_vector<StatData>[config.size()]),
                                                                                   _cache(cache), ops(0),
                                                                                   load(0), model(m) {
-        std::unordered_map<int, std::shared_ptr<SlabUnified<K, V>>> gpusToSlab;
+        std::unordered_map<int, std::shared_ptr<SlabUnified<unsigned long long, V>>> gpusToSlab;
         for (int i = 0; i < config.size(); i++) {
             if (gpusToSlab.find(config[i].gpu) == gpusToSlab.end())
-                gpusToSlab[config[i].gpu] = std::make_shared<SlabUnified<K, V >>(config[i].size, config[i].gpu);
+                gpusToSlab[config[i].gpu] = std::make_shared<SlabUnified<unsigned long long, V >>(config[i].size, config[i].gpu);
         }
         gpu_qs = new q_t[gpusToSlab.size()];
         numslabs = gpusToSlab.size();
@@ -38,19 +38,19 @@ struct Slabs {
         for (int i = 0; i < config.size(); i++) {
             //config[i].stream;
             threads.push_back(
-                    std::thread([this](int tid, int gpu, std::shared_ptr<SlabUnified<K, V>> slab,
+                    std::thread([this](int tid, int gpu, std::shared_ptr<SlabUnified<unsigned long long, V>> slab,
                                        cudaStream_t stream) {
                                     slab->setGPU();
-                                    auto batchData = new BatchBuffer<K, V>();
+                                    auto batchData = new BatchBuffer<unsigned long long, V>();
 
-                                    K *keys = batchData->getBatchKeys();
+                                    unsigned long long *keys = batchData->getBatchKeys();
                                     V *values = batchData->getBatchValues();
                                     int *requests = batchData->getBatchRequests();
                                     unsigned *hashes = batchData->getHashValues();
 
-                                    BatchData<K, data_t> *holdonto = nullptr;
+                                    BatchData<unsigned long long, data_t> *holdonto = nullptr;
 
-                                    std::vector<std::pair<int, BatchData<K, data_t> * >> writeBack;
+                                    std::vector<std::pair<int, BatchData<unsigned long long, data_t> * >> writeBack;
                                     writeBack.reserve(THREADS_PER_BLOCK * BLOCKS / 512);
                                     std::chrono::high_resolution_clock::time_point sampleTime;
                                     bool sampleTimeSet = false;
@@ -62,7 +62,7 @@ struct Slabs {
                                         }
                                         index = 0;
 
-                                        BatchData<K, data_t> *res;
+                                        BatchData<unsigned long long, data_t> *res;
 
                                         auto timestampWriteToBatch = std::chrono::high_resolution_clock::now();
 
@@ -223,7 +223,7 @@ struct Slabs {
         return ops;
     }
 
-    inline void batch(BatchData<K, data_t> *b, int partition) {
+    inline void batch(BatchData<unsigned long long, data_t> *b, int partition) {
         gpu_qs[partition].push(b);
     }
 
@@ -250,7 +250,7 @@ private:
     std::vector<std::thread> threads;
     std::atomic_bool done;
     tbb::concurrent_vector<StatData> *mops;
-    std::shared_ptr<typename Cache<K>::type> _cache;
+    std::shared_ptr<typename Cache::type> _cache;
     std::atomic_size_t ops;
     std::shared_ptr<M> model;
 };
