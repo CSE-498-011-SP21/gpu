@@ -11,7 +11,9 @@
 
 struct Communication {
 
-    explicit Communication(int s) : response(), size(s) {}
+    explicit Communication(int s) : response(), size(s) {
+        response.set_capacity(s);
+    }
 
     Communication(const Communication &) = delete;
 
@@ -27,7 +29,7 @@ struct Communication {
 
     int size;
 private:
-    tbb::concurrent_queue<Response> response;
+    tbb::concurrent_bounded_queue<Response> response;
 };
 
 #endif //KVCG_RESULTSBUFFERS_HH

@@ -20,7 +20,7 @@ using RB = std::shared_ptr<Communication>;
 
 int totalBatches = 10000;
 int BATCHSIZE = 512;
-int NUM_THREADS = 18;//std::thread::hardware_concurrency() - 10;
+int NUM_THREADS = 12;//std::thread::hardware_concurrency() - 10;
 
 void usage(char *command);
 
@@ -42,7 +42,7 @@ struct ServerConf {
         cpu_threads = NUM_THREADS;
         threads = 2;//1;//4;
         gpus = 1;
-        streams = 4;//10;
+        streams = 10;//10;
         size = 1000000;
         train = false;
         cache = true;
