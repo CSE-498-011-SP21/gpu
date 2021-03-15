@@ -86,7 +86,7 @@ void init_loadbalance(int num_threads) {
  * @tparam V
  * @tparam M
  */
-template<typename K, typename V, typename M, typename Slab_t = Slabs<K, V, M>, bool UseCache = true, bool UseGPU = true>
+template<typename K, typename M, typename Slab_t = Slabs<K, M>, bool UseCache = true, bool UseGPU = true>
 class KVStoreInternalClient {
 public:
     using time_point = std::chrono::high_resolution_clock::time_point;
@@ -98,8 +98,8 @@ private:
 
         ~CPUStageArgs() = default;
 
-        std::vector<RequestWrapper<K, typename Slab_t::VType>> req_vector;
-        std::shared_ptr<ResultsBuffers<V>> resBuf;
+        std::vector<RequestWrapper<K, data_t *>> req_vector;
+        std::shared_ptr<ResultsBuffers<data_t>> resBuf;
         int sizeForGPUBatches;
         std::vector<std::pair<int, unsigned>> cache_batch_correspondence;
         bool dontDoGPU;
@@ -111,7 +111,7 @@ private:
 public:
 
     KVStoreInternalClient(std::shared_ptr<Slab_t> s,
-                          std::shared_ptr<typename Cache<K, typename Slab_t::VType>::type> c, std::shared_ptr<M> m,
+                          std::shared_ptr<typename Cache<K>::type> c, std::shared_ptr<M> m,
                           int num_threads)
             : numslabs(
             UseGPU ? s->getNumslabs() : 0), slabs(s), cache(c), hits(0),
@@ -142,14 +142,14 @@ public:
         delete[] cpuStageQ;
     }
 
-    typedef RequestWrapper<K, typename Slab_t::VType> RW;
+    typedef RequestWrapper<K, data_t *> RW;
 
     /**
      * Performs the batch of operations given
      * @param req_vector
      */
-    void batch(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-               std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    void batch(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+               std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                time_point startTime) {
         assert(loadBalanceSet);
 
@@ -166,7 +166,7 @@ public:
         std::vector<std::pair<int, unsigned>> cache_batch_correspondence;
 
         cache_batch_correspondence.reserve(req_vector.size());
-        std::vector<BatchData<K, V> *> gpu_batches;
+        std::vector<BatchData<K, data_t> *> gpu_batches;
 
         gpu_batches.reserve(numslabs);
 
@@ -186,8 +186,8 @@ public:
                                             /*.startTime =*/ startTime});
     }
 
-    void batch_drop_modifications(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-                                  std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    void batch_drop_modifications(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+                                  std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                                   time_point startTime) {
 
         resBuf->retryModifications = true;
@@ -207,7 +207,7 @@ public:
         std::vector<std::pair<int, unsigned>> cache_batch_correspondence;
 
         cache_batch_correspondence.reserve(req_vector.size());
-        std::vector<BatchData<K, V> *> gpu_batches;
+        std::vector<BatchData<K, data_t> *> gpu_batches;
 
         gpu_batches.reserve(numslabs);
 
@@ -234,7 +234,7 @@ public:
         std::vector<time_point> times;
         times.reserve(THREADS_PER_BLOCK);
 
-        std::vector<BatchData<K, V> *> gpu_batches2;
+        std::vector<BatchData<K, data_t> *> gpu_batches2;
         gpu_batches2.reserve(numslabs);
         setUpMissBatches(args.req_vector, args.resBuf, gpu_batches2, args.startTime);
 
@@ -248,65 +248,44 @@ public:
             if (req_vector_elm.requestInteger != REQUEST_EMPTY) {
 
                 if (req_vector_elm.requestInteger == REQUEST_GET) {
-                    std::pair<kvgpu::LockingPair<K, typename Slab_t::VType> *, kvgpu::sharedlocktype> pair = cache->fast_get(
-                            req_vector_elm.key, cache_batch_idx.second, *model);
-                    if (pair.first == nullptr || pair.first->valid != 1) {
+                    auto pair = cache->get(req_vector_elm.key, cache_batch_idx.second, *model);
+                    if(pair.first){
                         onMiss(cache_batch_idx, gpu_batches2, req_vector_elm, args.resBuf, responseLocationInResBuf,
                                times);
                     } else {
                         hits.fetch_add(1, std::memory_order_relaxed);
-                        //std::cerr << "Hit on get" << __FILE__ << ":" << __LINE__ << "\n";
-                        args.resBuf->resultValues[responseLocationInResBuf] = handle_copy(pair);
+                        args.resBuf->resultValues[responseLocationInResBuf] = pair.second;
                         asm volatile("":: : "memory");
                         args.resBuf->requestIDs[responseLocationInResBuf] = cache_batch_idx.first;
                         responseLocationInResBuf++;
                         times.push_back(std::chrono::high_resolution_clock::now());
                     }
-                    if (pair.first != nullptr)
-                        pair.second.unlock();
                 } else {
-                    size_t logLoc = 0;
-                    std::pair<kvgpu::LockingPair<K, typename Slab_t::VType> *, std::unique_lock<kvgpu::mutex>> pair = cache->get_with_log(
-                            req_vector_elm.key, cache_batch_idx.second, *model, logLoc);
                     switch (req_vector_elm.requestInteger) {
                         case REQUEST_INSERT:
                             //std::cerr << "Insert request\n";
                             hits++;
-                            pair.first->value = req_vector_elm.value;
-                            pair.first->deleted = 0;
-                            pair.first->valid = 1;
+                            args.resBuf->resultValues[responseLocationInResBuf] = cache->put(req_vector_elm.key,
+                                                                                             req_vector_elm.value,
+                                                                                             cache_batch_idx.second,
+                                                                                             *model);
+                            asm volatile("":: : "memory");
                             args.resBuf->requestIDs[responseLocationInResBuf] = cache_batch_idx.first;
                             responseLocationInResBuf++;
-                            cache->log_requests->operator[](logLoc) = REQUEST_INSERT;
-                            cache->log_hash->operator[](logLoc) = cache_batch_idx.second;
-                            cache->log_keys->operator[](logLoc) = req_vector_elm.key;
-                            cache->log_values->operator[](logLoc) = req_vector_elm.value;
-
                             break;
                         case REQUEST_REMOVE:
                             //std::cerr << "RM request\n";
-
-                            if (pair.first->valid == 1) {
-                                args.resBuf->resultValues[responseLocationInResBuf] = pair.first->value;
-                                pair.first->value = nullptr;
-                            }
-
-                            pair.first->deleted = 1;
-                            pair.first->valid = 1;
+                            args.resBuf->resultValues[responseLocationInResBuf] = cache->remove(req_vector_elm.key,
+                                                                                                req_vector_elm.value,
+                                                                                                cache_batch_idx.second,
+                                                                                                *model);
                             hits++;
+                            asm volatile("":: : "memory");
                             args.resBuf->requestIDs[responseLocationInResBuf] = cache_batch_idx.first;
                             responseLocationInResBuf++;
-
-                            cache->log_requests->operator[](logLoc) = REQUEST_REMOVE;
-                            cache->log_hash->operator[](logLoc) = cache_batch_idx.second;
-                            cache->log_keys->operator[](logLoc) = req_vector_elm.key;
-
                             break;
                     }
                     times.push_back(std::chrono::high_resolution_clock::now());
-
-                    if (pair.first != nullptr)
-                        pair.second.unlock();
                 }
             }
         }
@@ -331,12 +310,12 @@ public:
         tbb::concurrent_vector<int> *log_requests = cache->log_requests;
         tbb::concurrent_vector<unsigned> *log_hash = cache->log_hash;
         tbb::concurrent_vector<K> *log_keys = cache->log_keys;
-        tbb::concurrent_vector<typename Slab_t::VType> *log_values = cache->log_values;
+        tbb::concurrent_vector<data_t *> *log_values = cache->log_values;
 
         auto new_log_requests = new tbb::concurrent_vector<int>(cache->getN() * cache->getSETS());
         auto new_log_hash = new tbb::concurrent_vector<unsigned>(cache->getN() * cache->getSETS());
         auto new_log_keys = new tbb::concurrent_vector<K>(cache->getN() * cache->getSETS());
-        auto new_log_values = new tbb::concurrent_vector<typename Slab_t::VType>(cache->getN() * cache->getSETS());
+        auto new_log_values = new tbb::concurrent_vector<data_t *>(cache->getN() * cache->getSETS());
 
         auto start = std::chrono::high_resolution_clock::now();
         asm volatile("":: : "memory");
@@ -354,18 +333,18 @@ public:
         int batchSizeUsed = std::min(THREADS_PER_BLOCK * BLOCKS,
                                      (int) (tmpSize / THREADS_PER_BLOCK + 1) * THREADS_PER_BLOCK);
 
-        std::vector<std::pair<int, std::shared_ptr<ResultsBuffers<V>>>> vecOfBufs;
+        std::vector<std::pair<int, std::shared_ptr<ResultsBuffers<data_t>>>> vecOfBufs;
 
         for (int enqueued = 0; enqueued < tmpSize; enqueued += batchSizeUsed) {
 
-            auto gpu_batches = std::vector<BatchData<K, V> *>(numslabs);
+            auto gpu_batches = std::vector<BatchData<K, data_t> *>(numslabs);
 
             for (int i = 0; i < numslabs; ++i) {
-                std::shared_ptr<ResultsBuffers<V>> resBuf = std::make_shared<ResultsBuffers<V>>(
+                std::shared_ptr<ResultsBuffers<data_t>> resBuf = std::make_shared<ResultsBuffers<data_t>>(
                         batchSizeUsed);
-                gpu_batches[i] = new BatchData<K, V>(0,
-                                                     resBuf,
-                                                     batchSizeUsed, start);
+                gpu_batches[i] = new BatchData<K, data_t>(0,
+                                                          resBuf,
+                                                          batchSizeUsed, start);
                 gpu_batches[i]->resBufStart = 0;
                 //gpu_batches[i]->flush = true;
             }
@@ -397,7 +376,7 @@ public:
 
         }
 
-        for (std::pair<int, std::shared_ptr<ResultsBuffers<V>>> &r : vecOfBufs) {
+        for (std::pair<int, std::shared_ptr<ResultsBuffers<data_t>>> &r : vecOfBufs) {
 
             int count;
             do {
@@ -484,9 +463,9 @@ public:
 
 private:
 
-    template<typename V1 = typename Slab_t::VType, std::enable_if_t<std::is_same<data_t *, V1>::value> * = nullptr>
-    V1 handle_copy(std::pair<kvgpu::LockingPair<K, typename Slab_t::VType> *, kvgpu::sharedlocktype> &pair) {
-        typename Slab_t::VType cpy = nullptr;
+    template<typename V1 = data_t *, std::enable_if_t<std::is_same<data_t *, V1>::value> * = nullptr>
+    V1 handle_copy(std::pair<kvgpu::LockingPair<K, data_t *> *, kvgpu::sharedlocktype> &pair) {
+        data_t *cpy = nullptr;
         if (pair.first->deleted == 0 && pair.first->value) {
             cpy = new data_t(pair.first->value->size);
             memcpy(cpy->data, pair.first->value->data, cpy->size);
@@ -494,8 +473,8 @@ private:
         return cpy;
     }
 
-    template<typename V1 = typename Slab_t::VType, std::enable_if_t<!std::is_same<data_t *, V1>::value> * = nullptr>
-    V1 handle_copy(std::pair<kvgpu::LockingPair<K, typename Slab_t::VType> *, kvgpu::sharedlocktype> &pair) {
+    template<typename V1 = data_t *, std::enable_if_t<!std::is_same<data_t *, V1>::value> * = nullptr>
+    V1 handle_copy(std::pair<kvgpu::LockingPair<K, data_t *> *, kvgpu::sharedlocktype> &pair) {
         std::cerr << "Why is this being used?" << std::endl;
         _exit(1);
         if (pair.first->deleted == 0 && pair.first->value) {
@@ -508,13 +487,13 @@ private:
     /// returns response location in resbuf
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && UseGPU)> * = nullptr>
     inline int
-    route(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-          std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    route(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+          std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
           std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
-          std::vector<BatchData<K, V> *> &gpu_batches, time_point startTime) {
+          std::vector<BatchData<K, data_t> *> &gpu_batches, time_point startTime) {
 
         for (int i = 0; i < numslabs; ++i) {
-            gpu_batches.push_back(new BatchData<K, V>(0, resBuf, req_vector.size(), startTime));
+            gpu_batches.push_back(new BatchData<K, data_t>(0, resBuf, req_vector.size(), startTime));
         }
 
         for (int i = 0; i < req_vector.size(); ++i) {
@@ -546,10 +525,10 @@ private:
     // just cache
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && !UseGPU)> * = nullptr>
     inline int
-    route(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-          std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    route(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+          std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
           std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
-          std::vector<BatchData<K, V> *> &gpu_batches, time_point startTime) {
+          std::vector<BatchData<K, data_t> *> &gpu_batches, time_point startTime) {
 
         for (int i = 0; i < req_vector.size(); ++i) {
             RW req = req_vector[i];
@@ -566,13 +545,13 @@ private:
     // GPU only
     template<bool UseCache_ = UseCache, typename std::enable_if_t<!UseCache_> * = nullptr>
     inline int
-    route(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-          std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    route(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+          std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
           std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
-          std::vector<BatchData<K, V> *> &gpu_batches, time_point startTime) {
+          std::vector<BatchData<K, data_t> *> &gpu_batches, time_point startTime) {
 
         for (int i = 0; i < numslabs; ++i) {
-            gpu_batches.push_back(new BatchData<K, V>(0, resBuf, req_vector.size(), startTime));
+            gpu_batches.push_back(new BatchData<K, data_t>(0, resBuf, req_vector.size(), startTime));
         }
 
         for (int i = 0; i < req_vector.size(); ++i) {
@@ -600,13 +579,13 @@ private:
 
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && UseGPU)> * = nullptr>
     inline int
-    route_drop_modifications(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-                             std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    route_drop_modifications(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+                             std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                              std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
-                             std::vector<BatchData<K, V> *> &gpu_batches, time_point startTime) {
+                             std::vector<BatchData<K, data_t> *> &gpu_batches, time_point startTime) {
 
         for (int i = 0; i < numslabs; ++i) {
-            gpu_batches.push_back(new BatchData<K, V>(0, resBuf, req_vector.size(), startTime));
+            gpu_batches.push_back(new BatchData<K, data_t>(0, resBuf, req_vector.size(), startTime));
         }
 
         for (int i = 0; i < req_vector.size(); ++i) {
@@ -638,10 +617,10 @@ private:
     // just cache
     template<bool UseCache_ = UseCache, typename std::enable_if_t<(UseCache_ && !UseGPU)> * = nullptr>
     inline int
-    route_drop_modifications(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-                             std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    route_drop_modifications(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+                             std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                              std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
-                             std::vector<BatchData<K, V> *> &gpu_batches, time_point startTime) {
+                             std::vector<BatchData<K, data_t> *> &gpu_batches, time_point startTime) {
 
         for (int i = 0; i < req_vector.size(); ++i) {
             RW req = req_vector[i];
@@ -658,13 +637,13 @@ private:
     // GPU only
     template<bool UseCache_ = UseCache, typename std::enable_if_t<!UseCache_> * = nullptr>
     inline int
-    route_drop_modifications(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-                             std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    route_drop_modifications(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+                             std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                              std::vector<std::pair<int, unsigned>> &cache_batch_corespondance,
-                             std::vector<BatchData<K, V> *> &gpu_batches, time_point startTime) {
+                             std::vector<BatchData<K, data_t> *> &gpu_batches, time_point startTime) {
 
         for (int i = 0; i < numslabs; ++i) {
-            gpu_batches.push_back(new BatchData<K, V>(0, resBuf, req_vector.size(), startTime));
+            gpu_batches.push_back(new BatchData<K, data_t>(0, resBuf, req_vector.size(), startTime));
         }
 
         for (int i = 0; i < req_vector.size(); ++i) {
@@ -692,7 +671,7 @@ private:
 
     // gpu only and normal
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<UseGPU_> * = nullptr>
-    inline void sendGPUBatches(bool &dontDoGPU, std::vector<BatchData<K, V> *> &gpu_batches) {
+    inline void sendGPUBatches(bool &dontDoGPU, std::vector<BatchData<K, data_t> *> &gpu_batches) {
         if (!dontDoGPU) {
             for (int i = 0; i < numslabs; ++i) {
                 slabs->increaseLoad();
@@ -707,30 +686,30 @@ private:
 
     // cpu only
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<!UseGPU_> * = nullptr>
-    inline void sendGPUBatches(bool &dontDoGPU, std::vector<BatchData<K, V> *> &gpu_batches) {}
+    inline void sendGPUBatches(bool &dontDoGPU, std::vector<BatchData<K, data_t> *> &gpu_batches) {}
 
     // normal
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<UseCache && UseGPU_> * = nullptr>
-    inline void setUpMissBatches(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-                                 std::shared_ptr<ResultsBuffers<V>> &resBuf,
-                                 std::vector<BatchData<K, V> *> &gpu_batches2, time_point startTime) {
+    inline void setUpMissBatches(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+                                 std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
+                                 std::vector<BatchData<K, data_t> *> &gpu_batches2, time_point startTime) {
         for (int i = 0; i < numslabs; ++i) {
-            gpu_batches2.push_back(new BatchData<K, V>(0, resBuf, req_vector.size(), startTime));
+            gpu_batches2.push_back(new BatchData<K, data_t>(0, resBuf, req_vector.size(), startTime));
         }
     }
 
     // gpu only or cpu only
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<
             (UseCache && !UseGPU_) || (!UseCache && UseGPU_)> * = nullptr>
-    inline void setUpMissBatches(std::vector<RequestWrapper<K, typename Slab_t::VType>> &req_vector,
-                                 std::shared_ptr<ResultsBuffers<V>> &resBuf,
-                                 std::vector<BatchData<K, V> *> &gpu_batches2, time_point startTime) {}
+    inline void setUpMissBatches(std::vector<RequestWrapper<K, data_t *>> &req_vector,
+                                 std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
+                                 std::vector<BatchData<K, data_t> *> &gpu_batches2, time_point startTime) {}
 
     // normal
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<UseCache && UseGPU_> * = nullptr>
-    inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx, std::vector<BatchData<K, V> *> &gpu_batches2,
-                       RequestWrapper<K, typename Slab_t::VType> &req_vector_elm,
-                       std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx, std::vector<BatchData<K, data_t> *> &gpu_batches2,
+                       RequestWrapper<K, data_t *> &req_vector_elm,
+                       std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                        int &responseLocationInResBuf,
                        std::vector<time_point> &times) {
         int gpuToUse = cache_batch_idx.second % numslabs;
@@ -744,9 +723,9 @@ private:
 
     // cache only
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<UseCache && !UseGPU_> * = nullptr>
-    inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx, std::vector<BatchData<K, V> *> &gpu_batches2,
-                       RequestWrapper<K, typename Slab_t::VType> &req_vector_elm,
-                       std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx, std::vector<BatchData<K, data_t> *> &gpu_batches2,
+                       RequestWrapper<K, data_t *> &req_vector_elm,
+                       std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                        int &responseLocationInResBuf,
                        std::vector<time_point> &times) {
         hits.fetch_add(1, std::memory_order_relaxed);
@@ -759,9 +738,9 @@ private:
 
     // gpu only
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<!UseCache && UseGPU_> * = nullptr>
-    inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx, std::vector<BatchData<K, V> *> &gpu_batches2,
-                       RequestWrapper<K, typename Slab_t::VType> &req_vector_elm,
-                       std::shared_ptr<ResultsBuffers<V>> &resBuf,
+    inline void onMiss(std::pair<int, unsigned int> &cache_batch_idx, std::vector<BatchData<K, data_t> *> &gpu_batches2,
+                       RequestWrapper<K, data_t *> &req_vector_elm,
+                       std::shared_ptr<ResultsBuffers<data_t>> &resBuf,
                        int &responseLocationInResBuf,
                        std::vector<time_point> &times) {
         // should never be called
@@ -772,8 +751,8 @@ private:
     // normal
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<UseCache && UseGPU_> * = nullptr>
     inline void
-    forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<K, V> *> &gpu_batches2, int &sizeForGPUBatches,
-                     std::shared_ptr<ResultsBuffers<V>> &resBuf) {
+    forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<K, data_t> *> &gpu_batches2, int &sizeForGPUBatches,
+                     std::shared_ptr<ResultsBuffers<data_t>> &resBuf) {
         if (!dontDoGPU) {
             for (int i = 0; i < numslabs; ++i) {
                 if (gpu_batches2[i]->idx > 0) {
@@ -796,14 +775,14 @@ private:
     // cache only
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<(UseCache && !UseGPU_)> * = nullptr>
     inline void
-    forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<K, V> *> &gpu_batches2, int &sizeForGPUBatches,
-                     std::shared_ptr<ResultsBuffers<V>> &resBuf) {}
+    forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<K, data_t> *> &gpu_batches2, int &sizeForGPUBatches,
+                     std::shared_ptr<ResultsBuffers<data_t>> &resBuf) {}
 
     // gpu only
     template<bool UseGPU_ = UseGPU, typename std::enable_if_t<!UseCache && UseGPU_> * = nullptr>
     inline void
-    forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<K, V> *> &gpu_batches2, int &sizeForGPUBatches,
-                     std::shared_ptr<ResultsBuffers<V>> &resBuf) {
+    forwardMissBatch(bool &dontDoGPU, std::vector<BatchData<K, data_t> *> &gpu_batches2, int &sizeForGPUBatches,
+                     std::shared_ptr<ResultsBuffers<data_t>> &resBuf) {
         if (dontDoGPU) {
             resBuf->retryGPU = true;
         }
@@ -813,7 +792,7 @@ private:
     std::mutex mtx;
     std::shared_ptr<Slab_t> slabs;
     //SlabUnified<K,V> *slabs;
-    std::shared_ptr<typename Cache<K, typename Slab_t::VType>::type> cache;
+    std::shared_ptr<typename Cache<K>::type> cache;
     std::hash<K> hfn;
     std::atomic_size_t hits;
     std::atomic_size_t operations;
@@ -827,10 +806,10 @@ private:
     std::mutex modelMtx;
 };
 
-template<typename K, typename V, typename M, typename Slab_t = Slabs<K, V, M>>
-using NoCacheKVStoreInternalClient = KVStoreInternalClient<K, V, M, Slab_t, false, true>;
+template<typename K, typename M, typename Slab_t = Slabs<K, M>>
+using NoCacheKVStoreInternalClient = KVStoreInternalClient<K, M, Slab_t, false, true>;
 
-template<typename K, typename V, typename M, typename Slab_t = Slabs<K, V, M>>
-using JustCacheKVStoreInternalClient = KVStoreInternalClient<K, V, M, Slab_t, true, false>;
+template<typename K, typename M, typename Slab_t = Slabs<K, M>>
+using JustCacheKVStoreInternalClient = KVStoreInternalClient<K, M, Slab_t, true, false>;
 
 #endif //KVGPU_KVSTOREINTERNALCLIENT_CUH

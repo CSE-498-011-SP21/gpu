@@ -152,9 +152,9 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::unique_ptr<KVStoreCtx<unsigned long long, data_t, Model>> ctx = nullptr;
+    std::unique_ptr<KVStoreCtx<unsigned long long, Model>> ctx = nullptr;
     if (sconf.modelFile != "") {
-        ctx = std::make_unique<KVStoreCtx<unsigned long long, data_t, Model>>(conf, sconf.cpu_threads, sconf.modelFile);
+        ctx = std::make_unique<KVStoreCtx<unsigned long long, Model>>(conf, sconf.cpu_threads, sconf.modelFile);
     } else {
 //#ifdef MODEL_CHANGE
         unsigned tseed = time(nullptr);
@@ -173,21 +173,21 @@ int main(int argc, char **argv) {
 #ifdef MODEL_CHANGE
         workloadSwitch();
 #endif
-        ctx = std::make_unique<KVStoreCtx<unsigned long long, data_t, Model>>(conf, sconf.cpu_threads, m);
+        ctx = std::make_unique<KVStoreCtx<unsigned long long, Model>>(conf, sconf.cpu_threads, m);
 //#else
 //        ctx = std::make_unique<KVStoreCtx<unsigned long long, data_t, Model>>(conf, sconf.cpu_threads);
 //#endif
     }
 
-    GeneralClient<unsigned long long, data_t, Model> *client = nullptr;
+    GeneralClient<unsigned long long, Model> *client = nullptr;
     if (sconf.cache) {
         if (sconf.gpus == 0) {
-            client = new JustCacheKVStoreClient<unsigned long long, data_t, Model>(*ctx);
+            client = new JustCacheKVStoreClient<unsigned long long, Model>(*ctx);
         } else {
-            client = new KVStoreClient<unsigned long long, data_t, Model>(*ctx);
+            client = new KVStoreClient<unsigned long long, Model>(*ctx);
         }
     } else {
-        client = new NoCacheKVStoreClient<unsigned long long, data_t, Model>(*ctx);
+        client = new NoCacheKVStoreClient<unsigned long long, Model>(*ctx);
     }
 
     unsigned popSeed = time(nullptr);

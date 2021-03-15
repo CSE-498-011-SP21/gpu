@@ -41,7 +41,7 @@ void thread_func(barrier_t &b, int ops, int range,
                  cache_t &cache, std::vector<int> &foundValid, std::vector<int> &searchTotal, int tid) {
 
     std::default_random_engine generator;
-    std::uniform_int_distribution<unsigned long long> distribution(1,range);
+    std::uniform_int_distribution<unsigned long long> distribution(1, range);
 
     kvgpu::SimplModel<unsigned long long> m;
     b.wait();

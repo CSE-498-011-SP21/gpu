@@ -3,14 +3,11 @@
 //
 
 #include "Operations.cuh"
+#include <RequestTypes.hh>
 
 #ifndef GPUKEYVALUESTORE_STDREQUESTHANDLER_CUH
 #define GPUKEYVALUESTORE_STDREQUESTHANDLER_CUH
 
-const int REQUEST_INSERT = 1;
-const int REQUEST_GET = 2;
-const int REQUEST_REMOVE = 3;
-const int REQUEST_EMPTY = 0;
 
 /**
  * mvValue index is set to the value on a GET or EMPTY<V>::value if there is no value

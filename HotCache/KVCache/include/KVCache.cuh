@@ -15,6 +15,7 @@
 #include <immintrin.h>
 #include <Model.hh>
 #include <ImportantDefinitions.hh>
+#include <RequestTypes.hh>
 
 namespace kvgpu {
 
@@ -24,7 +25,7 @@ namespace kvgpu {
 
     template<typename K, typename V>
     struct LockingPair {
-        LockingPair() : valid(0), deleted(0) {}
+        LockingPair() : valid(0), deleted(0), key(), value() {}
 
         ~LockingPair() {}
 
@@ -36,7 +37,7 @@ namespace kvgpu {
     };
 
     /**
-     * HotCache caches keys and values
+     * KVCache caches keys and values
      * K is the key type
      * V is the value type
      * DSCaching is a data structure that is being cached by this cache
@@ -115,7 +116,169 @@ namespace kvgpu {
          * @param hash
          * @return
          */
-        std::pair<LockingPair<K, V> *, locktype> get(K key, unsigned hash, const Model <K> &mfn) {
+        std::pair<LockingPair<K, V> *, sharedlocktype> fast_get(K key, unsigned hash, const Model<K> &mfn) {
+            unsigned setIdx = hash % SETS;
+            LockingPair<K, V> *set = map[setIdx];
+            sharedlocktype sharedlock(mtx[setIdx]);
+
+            LockingPair<K, V> *firstInvalidPair = nullptr;
+
+            for (unsigned i = 0; i < N; i++) {
+                if (set[i].valid != 0 && compare(set[i].key, key) == 0) {
+                    return {&set[i], std::move(sharedlock)};
+                }
+            }
+            Node_t *node = nodes[setIdx].load();
+            while (node != nullptr) {
+                set = node->set;
+                for (unsigned i = 0; i < N; i++) {
+                    if (set[i].valid != 0 && compare(set[i].key, key) == 0) {
+                        return {&set[i], std::move(sharedlock)};
+                    }
+                }
+                node = node->next;
+            }
+
+            return {firstInvalidPair, std::move(std::shared_lock<std::shared_mutex>())};
+        }
+
+
+        /**
+         *
+         * @param key
+         * @param value
+         * @param hash
+         * @param mfn
+         * @return
+         */
+        inline data_t *put(K key, data_t *value, unsigned hash, const Model<K> &mfn) {
+            size_t logLoc;
+            auto pair = get_with_log(key, hash, mfn, logLoc);
+
+            data_t *old_value = pair.first->value;
+
+            pair.first->value = value;
+            pair.first->deleted = 0;
+            pair.first->valid = 1;
+            log_requests->operator[](logLoc) = REQUEST_INSERT;
+            log_hash->operator[](logLoc) = hash;
+            log_keys->operator[](logLoc) = key;
+            log_values->operator[](logLoc) = value;
+
+            return old_value;
+        }
+
+        /**
+         *
+         * @param key
+         * @param value
+         * @param hash
+         * @param mfn
+         * @return
+         */
+        inline data_t *remove(K key, data_t *value, unsigned hash, const Model<K> &mfn) {
+            size_t logLoc;
+            auto pair = get_with_log(key, hash, mfn, logLoc);
+
+            data_t *old_value = pair.first->value;
+            pair.first->value = nullptr;
+            pair.first->deleted = 1;
+            pair.first->valid = 1;
+
+            log_requests->operator[](logLoc) = REQUEST_REMOVE;
+            log_hash->operator[](logLoc) = hash;
+            log_keys->operator[](logLoc) = key;
+
+            return old_value;
+        }
+
+
+        /**
+         * Returns value that should be written to client. Insert (do not do PUT) the value into the map.
+         * Return a copy of what is in the map at the end of the insert.
+         * @param key
+         * @param value
+         * @param hash
+         * @param mfn
+         * @return
+         */
+        inline data_t *missCallback(K key, data_t *value, unsigned hash, const Model<K> &mfn) {
+            auto cacheRes = internal_get(key, hash, mfn);
+
+            data_t *cpy = nullptr;
+
+            if (cacheRes.first->valid == 1) {
+                if (cacheRes.first->deleted == 0) {
+                    cpy = new data_t(cacheRes.first->value->size);
+                    memcpy(cpy->data, cacheRes.first->value->data, cpy->size);
+                }
+            } else {
+                cacheRes.first->valid = 1;
+                cacheRes.first->value = value;
+                cacheRes.first->deleted = (value == EMPTY<V>::value);
+                if (cacheRes.first->deleted == 0) {
+                    cpy = new data_t(cacheRes.first->value->size);
+                    memcpy(cpy->data, cacheRes.first->value->data, cpy->size);
+                }
+            }
+
+            return cpy;
+        }
+
+        template<typename H>
+        void scan_and_evict(const Model<K> &mfn, const H &hfn, std::unique_lock<std::mutex> modelLock) {
+
+            for (int setIdx = 0; setIdx < SETS; setIdx++) {
+                LockingPair<K, V> *set = map[setIdx];
+                locktype unique(mtx[setIdx]);
+
+                for (unsigned i = 0; i < N; i++) {
+                    if (!mfn(set[i].key, hfn(set[i].key))) {
+                        set[i].valid = 0;
+                    }
+                }
+                Node_t *node = nodes[setIdx].load();
+                while (node != nullptr) {
+                    set = node->set;
+                    for (unsigned i = 0; i < N; i++) {
+
+                        if (!mfn(set[i].key, hfn(set[i].key))) {
+                            set[i].valid = 0;
+                        }
+                    }
+                    node = node->next;
+                }
+            }
+        }
+
+
+        constexpr size_t getN() {
+            return N;
+        }
+
+        constexpr size_t getSETS() {
+            return SETS;
+        }
+
+        void stat() {
+            //std::cout << "Cache Expansions " << expansions << std::endl;
+            //std::cout << "Footprint without expansions: " << (sizeof(*this) + sizeof(LockingPair<K,V>) * SETS * N) / 1024.0 / 1024.0 << " MB" << std::endl;
+        }
+
+        tbb::concurrent_vector<int> *log_requests;
+        tbb::concurrent_vector<unsigned> *log_hash;
+        tbb::concurrent_vector<K> *log_keys;
+        tbb::concurrent_vector<V> *log_values;
+        std::atomic_size_t log_size;
+
+
+        /**
+         * Gets a key returns {ptr, lock} if successful and {nullptr, ...} if not
+         * @param key
+         * @param hash
+         * @return
+         */
+        std::pair<LockingPair<K, V> *, locktype> internal_get(K key, unsigned hash, const Model<K> &mfn) {
             unsigned setIdx = hash % SETS;
             LockingPair<K, V> *set = map[setIdx];
             locktype unique(mtx[setIdx]);
@@ -169,41 +332,9 @@ namespace kvgpu {
             return {firstInvalidPair, std::move(unique)};
         }
 
-        /**
-         * Gets a key returns {ptr, lock} if successful and {nullptr, ...} if not
-         * @param key
-         * @param hash
-         * @return
-         */
-        std::pair<LockingPair<K, V> *, sharedlocktype> fast_get(K key, unsigned hash, const Model <K> &mfn) {
-            unsigned setIdx = hash % SETS;
-            LockingPair<K, V> *set = map[setIdx];
-            sharedlocktype sharedlock(mtx[setIdx]);
-
-            LockingPair<K, V> *firstInvalidPair = nullptr;
-
-            for (unsigned i = 0; i < N; i++) {
-                if (set[i].valid != 0 && compare(set[i].key, key) == 0) {
-                    return {&set[i], std::move(sharedlock)};
-                }
-            }
-            Node_t *node = nodes[setIdx].load();
-            while (node != nullptr) {
-                set = node->set;
-                for (unsigned i = 0; i < N; i++) {
-                    if (set[i].valid != 0 && compare(set[i].key, key) == 0) {
-                        return {&set[i], std::move(sharedlock)};
-                    }
-                }
-                node = node->next;
-            }
-
-            return {firstInvalidPair, std::move(std::shared_lock<std::shared_mutex>())};
-        }
-
 
         std::pair<LockingPair<K, V> *, locktype>
-        get_with_log(K key, unsigned hash, const Model <K> &mfn, size_t &logLoc) {
+        get_with_log(K key, unsigned hash, const Model<K> &mfn, size_t &logLoc) {
             unsigned setIdx = hash % SETS;
             LockingPair<K, V> *set = map[setIdx];
             locktype unique(mtx[setIdx]);
@@ -260,30 +391,142 @@ namespace kvgpu {
             return {firstInvalidPair, std::move(unique)};
         }
 
-        template<typename H>
-        void scan_and_evict(const Model <K> &mfn, const H &hfn, std::unique_lock<std::mutex> modelLock) {
+    private:
 
-            for (int setIdx = 0; setIdx < SETS; setIdx++) {
-                LockingPair<K, V> *set = map[setIdx];
-                locktype unique(mtx[setIdx]);
+        LockingPair<K, V> **map;
+        mutex *mtx;
+        std::atomic<Node_t *> *nodes;
+        std::atomic_size_t expansions;
+    };
 
-                for (unsigned i = 0; i < N; i++) {
-                    if (!mfn(set[i].key, hfn(set[i].key))) {
-                        set[i].valid = 0;
-                    }
+    /**
+     * KVCache caches keys and values
+     * K is the key type
+     * V is the value type
+     * DSCaching is a data structure that is being cached by this cache
+     * SETS is the number of SETs in the cache
+     * N is the number of elements per set
+     * @tparam K
+     * @tparam V
+     * @tparam DSCaching
+     * @tparam SETS
+     * @tparam N
+     */
+    template<typename K, unsigned SETS = 524288 / sizeof(LockingPair<K, data_t *>) / 8, unsigned N = 8>
+    class KVCacheWrapper {
+    private:
+    public:
+        /**
+         * Creates cache
+         */
+        KVCacheWrapper()
+                : cache(), log_requests(cache.log_requests), log_hash(cache.log_hash), log_keys(cache.log_keys),
+                  log_values(cache.log_values), log_size(cache.log_size) {
+
+        }
+
+        /**
+         * Removes cache
+         */
+        ~KVCacheWrapper() {}
+
+        std::pair<bool, data_t *>get(K key, unsigned hash, const Model<K> &mfn) {
+            auto pair = cache.fast_get(key, hash, mfn);
+
+            if (pair.first == nullptr || pair.first->valid != 1) {
+                return {true, nullptr};
+            } else {
+                auto cpy = new data_t(pair.first->value->size);
+                memcpy(cpy->data, pair.first->value->data, cpy->size);
+                return {false, cpy};
+            }
+        }
+
+        /**
+         *
+         * @param key
+         * @param value
+         * @param hash
+         * @param mfn
+         * @return
+         */
+        inline data_t *put(K key, data_t *value, unsigned hash, const Model<K> &mfn) {
+            size_t logLoc;
+            auto pair = cache.get_with_log(key, hash, mfn, logLoc);
+
+            data_t *old_value = pair.first->value;
+
+            pair.first->value = value;
+            pair.first->deleted = 0;
+            pair.first->valid = 1;
+            log_requests->operator[](logLoc) = REQUEST_INSERT;
+            log_hash->operator[](logLoc) = hash;
+            log_keys->operator[](logLoc) = key;
+            log_values->operator[](logLoc) = value;
+
+            return old_value;
+        }
+
+        /**
+         *
+         * @param key
+         * @param value
+         * @param hash
+         * @param mfn
+         * @return
+         */
+        inline data_t *remove(K key, data_t *value, unsigned hash, const Model<K> &mfn) {
+            size_t logLoc;
+            auto pair = cache.get_with_log(key, hash, mfn, logLoc);
+
+            data_t *old_value = pair.first->value;
+            pair.first->value = nullptr;
+            pair.first->deleted = 1;
+            pair.first->valid = 1;
+
+            log_requests->operator[](logLoc) = REQUEST_REMOVE;
+            log_hash->operator[](logLoc) = hash;
+            log_keys->operator[](logLoc) = key;
+
+            return old_value;
+        }
+
+
+        /**
+         * Returns value that should be written to client. Insert (do not do PUT) the value into the map.
+         * Return a copy of what is in the map at the end of the insert.
+         * @param key
+         * @param value
+         * @param hash
+         * @param mfn
+         * @return
+         */
+        inline data_t *missCallback(K key, data_t *value, unsigned hash, const Model<K> &mfn) {
+            auto cacheRes = cache.internal_get(key, hash, mfn);
+
+            data_t *cpy = nullptr;
+
+            if (cacheRes.first->valid == 1) {
+                if (cacheRes.first->deleted == 0) {
+                    cpy = new data_t(cacheRes.first->value->size);
+                    memcpy(cpy->data, cacheRes.first->value->data, cpy->size);
                 }
-                Node_t *node = nodes[setIdx].load();
-                while (node != nullptr) {
-                    set = node->set;
-                    for (unsigned i = 0; i < N; i++) {
-
-                        if (!mfn(set[i].key, hfn(set[i].key))) {
-                            set[i].valid = 0;
-                        }
-                    }
-                    node = node->next;
+            } else {
+                cacheRes.first->valid = 1;
+                cacheRes.first->value = value;
+                cacheRes.first->deleted = (value == nullptr);
+                if (cacheRes.first->deleted == 0) {
+                    cpy = new data_t(cacheRes.first->value->size);
+                    memcpy(cpy->data, cacheRes.first->value->data, cpy->size);
                 }
             }
+
+            return cpy;
+        }
+
+        template<typename H>
+        void scan_and_evict(const Model<K> &mfn, const H &hfn, std::unique_lock<std::mutex> modelLock) {
+            cache.scan_and_evict(mfn, hfn, std::move(modelLock));
         }
 
 
@@ -300,21 +543,22 @@ namespace kvgpu {
             //std::cout << "Footprint without expansions: " << (sizeof(*this) + sizeof(LockingPair<K,V>) * SETS * N) / 1024.0 / 1024.0 << " MB" << std::endl;
         }
 
-        tbb::concurrent_vector<int> *log_requests;
-        tbb::concurrent_vector<unsigned> *log_hash;
-        tbb::concurrent_vector<K> *log_keys;
-        tbb::concurrent_vector<V> *log_values;
-        std::atomic_size_t log_size;
-
     private:
-        LockingPair<K, V> **map;
-        mutex *mtx;
-        std::atomic<Node_t *> *nodes;
-        std::atomic_size_t expansions;
+
+        KVCache<K, data_t *, SETS, N> cache;
+
+    public:
+
+        tbb::concurrent_vector<int> *&log_requests;
+        tbb::concurrent_vector<unsigned> *&log_hash;
+        tbb::concurrent_vector<K> *&log_keys;
+        tbb::concurrent_vector<data_t *> *&log_values;
+        std::atomic_size_t &log_size;
     };
 
+
     /**
-     * HotCache caches keys and values
+     * KVCache caches keys and values
      * K is the key type
      * V is the value type
      * DSCaching is a data structure that is being cached by this cache
@@ -414,7 +658,7 @@ namespace kvgpu {
          * @param hash
          * @return
          */
-        std::tuple<Bucket *, int, locktype> get(K key, unsigned hash, const Model <K> &mfn) {
+        std::tuple<Bucket *, int, locktype> get(K key, unsigned hash, const Model<K> &mfn) {
             unsigned setIdx = hash % SETS;
             Bucket *set = map[setIdx];
             locktype unique(mtx[setIdx]);
@@ -495,7 +739,7 @@ namespace kvgpu {
          * @param hash
          * @return
          */
-        std::tuple<Bucket *, int, locktype> fast_get(K key, unsigned hash, const Model <K> &mfn) {
+        std::tuple<Bucket *, int, locktype> fast_get(K key, unsigned hash, const Model<K> &mfn) {
             unsigned setIdx = hash % SETS;
             Bucket *set = map[setIdx];
             sharedlocktype unique(mtx[setIdx]);
@@ -547,7 +791,7 @@ namespace kvgpu {
 
 
         std::tuple<Bucket *, int, locktype>
-        get_with_log(K key, unsigned hash, const Model <K> &mfn, size_t &logLoc) {
+        get_with_log(K key, unsigned hash, const Model<K> &mfn, size_t &logLoc) {
 
             unsigned setIdx = hash % SETS;
             Bucket *set = map[setIdx];
@@ -627,7 +871,7 @@ namespace kvgpu {
         }
 
         template<typename H>
-        void scan_and_evict(const Model <K> &mfn, const H &hfn, std::unique_lock<std::mutex> modelLock) {
+        void scan_and_evict(const Model<K> &mfn, const H &hfn, std::unique_lock<std::mutex> modelLock) {
 
             for (int setIdx = 0; setIdx < SETS; setIdx++) {
                 LockingPair<K, V> *set = map[setIdx];

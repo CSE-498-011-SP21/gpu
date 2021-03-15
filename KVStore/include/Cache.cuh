@@ -5,10 +5,10 @@
 #ifndef KVCG_CACHE_CUH
 #define KVCG_CACHE_CUH
 
-template<typename K, typename V>
+template<typename K>
 class Cache {
 public:
-    typedef kvgpu::KVCache<K, V, 1000000, 8> type;
+    typedef kvgpu::KVCacheWrapper<K, 1000000, 8> type;
 };
 
 #endif //KVCG_CACHE_CUH
