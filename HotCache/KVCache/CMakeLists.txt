@@ -2,6 +2,11 @@ add_library(kvcache INTERFACE)
 target_include_directories(kvcache INTERFACE include)
 target_link_libraries(kvcache INTERFACE TBB::tbb model commonInterfacesCXX pthread)
 
+get_target_property(PUBLIC_HEADER_DIR_KVCACHE kvcache INTERFACE_INCLUDE_DIRECTORIES)
+file(GLOB_RECURSE PUBLIC_HEADERS_KVCACHE ${PUBLIC_HEADER_DIR_KVCACHE}/*)
+set(DOXYGEN_INPUT_DIR "${DOXYGEN_INPUT_DIR} ${PUBLIC_HEADER_DIR_KVCACHE}" PARENT_SCOPE)
+set(DOXYGEN_PUBLIC_HEADERS "${DOXYGEN_PUBLIC_HEADERS};${PUBLIC_HEADERS_KVCACHE}" PARENT_SCOPE)
+
 add_executable(kvcache-bench benchmark/KVCache_benchmark.cu)
 target_link_libraries(kvcache-bench kvcache)
 

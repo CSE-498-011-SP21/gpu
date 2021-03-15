@@ -1,6 +1,6 @@
-//
-// Created by depaulsmiller on 3/14/21.
-//
+/**
+ * @file
+ */
 
 #ifndef KVCG_STATDATA_CUH
 #define KVCG_STATDATA_CUH

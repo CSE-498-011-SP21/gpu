@@ -11,6 +11,12 @@ target_link_libraries(kvstore INTERFACE commonInterfacesCXX)
 target_link_libraries(kvstore INTERFACE commonInterfacesCUDA)
 target_link_libraries(kvstore INTERFACE canonicalstore)
 
+# used for Doxygen
+get_target_property(PUBLIC_HEADER_DIR_KVSTORE kvstore INTERFACE_INCLUDE_DIRECTORIES)
+file(GLOB_RECURSE PUBLIC_HEADERS_KVSTORE ${PUBLIC_HEADER_DIR_KVSTORE}/*)
+set(DOXYGEN_INPUT_DIR "${DOXYGEN_INPUT_DIR} ${PUBLIC_HEADER_DIR_KVSTORE}" PARENT_SCOPE)
+set(DOXYGEN_PUBLIC_HEADERS "${DOXYGEN_PUBLIC_HEADERS};${PUBLIC_HEADERS_KVSTORE}" PARENT_SCOPE)
+
 add_executable(KVStoreClientTest test/KVStoreClientTest.cu)
 target_link_libraries(KVStoreClientTest GTest::gmock GTest::gtest GTest::gmock_main GTest::gtest_main kvstore)
 add_test(KVStoreClientTest KVStoreClientTest)

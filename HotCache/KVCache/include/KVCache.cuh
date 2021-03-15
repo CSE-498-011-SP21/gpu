@@ -1,6 +1,6 @@
-//
-// Created by depaulsmiller on 8/28/20.
-//
+/**
+ * @file
+ */
 
 #ifndef KVGPU_KVCACHE_CUH
 #define KVGPU_KVCACHE_CUH

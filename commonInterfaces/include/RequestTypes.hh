@@ -1,6 +1,7 @@
-//
-// Created by depaulsmiller on 3/14/21.
-//
+/**
+ * @file
+ */
+
 
 #ifndef KVCG_REQUESTTYPES_HH
 #define KVCG_REQUESTTYPES_HH

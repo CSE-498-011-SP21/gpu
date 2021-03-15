@@ -1,2 +1,5 @@
 add_subdirectory(KVCache)
 add_subdirectory(HotCacheInterface)
+
+set(DOXYGEN_INPUT_DIR "${DOXYGEN_INPUT_DIR}" PARENT_SCOPE)
+set(DOXYGEN_PUBLIC_HEADERS "${DOXYGEN_PUBLIC_HEADERS}" PARENT_SCOPE)

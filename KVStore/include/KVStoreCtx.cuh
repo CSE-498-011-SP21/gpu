@@ -1,6 +1,6 @@
-//
-// Created by depaulsmiller on 9/2/20.
-//
+/**
+ * @file
+ */
 
 #include "KVStoreInternalClient.cuh"
 

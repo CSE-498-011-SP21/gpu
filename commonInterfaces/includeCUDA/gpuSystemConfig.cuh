@@ -1,6 +1,6 @@
-//
-// Created by depaulsmiller on 3/14/21.
-//
+/**
+ * @file
+ */
 
 #ifndef KVCG_GPUSYSTEMCONFIG_CUH
 #define KVCG_GPUSYSTEMCONFIG_CUH

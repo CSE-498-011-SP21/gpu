@@ -1,5 +1,5 @@
-//
-// Created by depaulsmiller on 8/28/20.
-//
+/**
+ * @file
+ */
 
 #include "KVStoreClient.cuh"

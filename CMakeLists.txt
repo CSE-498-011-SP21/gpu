@@ -8,6 +8,7 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES OFF)
 message("USING ${CMAKE_TOOLCHAIN_FILE}")
 
+find_package(Doxygen)
 find_package(Boost REQUIRED)
 find_package(TBB REQUIRED)
 find_package(GTest CONFIG REQUIRED)
@@ -27,6 +28,8 @@ add_subdirectory(CanonicalStore)
 add_subdirectory(KVStore)
 
 add_subdirectory(benchmark)
+
+add_subdirectory(docs)
 
 set(KVGPU_TARGETLIST ${KVGPU_TARGETLIST} kvstore rand)
 

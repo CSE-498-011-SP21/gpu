@@ -1,6 +1,6 @@
-//
-// Created by depaulsmiller on 3/14/21.
-//
+/**
+ * @file
+ */
 
 #include "data_t.hh"
 
