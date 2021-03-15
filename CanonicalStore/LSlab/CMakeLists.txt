@@ -4,6 +4,7 @@ add_library(lslab INTERFACE)
 target_include_directories(lslab INTERFACE include)
 target_link_libraries(lslab INTERFACE allocator)
 target_link_libraries(lslab INTERFACE commonInterfacesCXX)
+target_link_libraries(lslab INTERFACE commonInterfacesCUDA)
 
 get_target_property(PUBLIC_HEADER_DIR_LSLAB lslab INTERFACE_INCLUDE_DIRECTORIES)
 file(GLOB_RECURSE PUBLIC_HEADERS_LSLAB ${PUBLIC_HEADER_DIR_LSLAB}/*)

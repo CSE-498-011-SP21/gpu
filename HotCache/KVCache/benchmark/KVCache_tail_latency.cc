@@ -1,4 +1,4 @@
-#include <KVCache.cuh>
+#include <KVCache.hh>
 #include <vector>
 #include <thread>
 #include <chrono>
@@ -31,12 +31,6 @@ struct barrier_t {
     }
 };
 
-template<>
-__host__ __device__ __forceinline__ unsigned
-compare<unsigned long long>(const unsigned long long &x, const unsigned long long &y) {
-    return x - y;
-}
-
 double thread_func(barrier_t &b, int ops, int range,
                    cache_t &cache, std::vector<int> &foundValid, std::vector<int> &searchTotal, int tid) {
 
@@ -62,11 +56,12 @@ double thread_func(barrier_t &b, int ops, int range,
             searchTotal[tid] = searchTotal[tid] + 1;
         } else {
             size_t log_loc;
+            bool logLocSet;
 
-            auto ret = cache.get_with_log(k, k, m, log_loc);
-            if (ret.first) {
-                ret.first->valid = 1;
-                ret.first->value = 4;
+            auto ret = cache.get_with_log(k, k, m);
+            if (std::get<0>(ret)) {
+                std::get<0>(ret)->valid = 1;
+                std::get<0>(ret)->value = 4;
                 foundValid[tid] = foundValid[tid] + 1;
             }
             searchTotal[tid] = searchTotal[tid] + 1;
@@ -100,11 +95,12 @@ int main(int argc, char **argv) {
     for (int i = 0; i < range; i++) {
         kvgpu::SimplModel<unsigned long long> m;
         size_t log_loc;
-        auto ret = cache.get_with_log(i, i, m, log_loc);
-        assert(ret.first != nullptr);
-        ret.first->valid = 1;
-        ret.first->key = (unsigned long long) i;
-        ret.first->value = 2;
+        bool logLocSet;
+        auto ret = cache.get_with_log(i, i, m);
+        assert(std::get<0>(ret) != nullptr);
+        std::get<0>(ret)->valid = 1;
+        std::get<0>(ret)->key = (unsigned long long) i;
+        std::get<0>(ret)->value = 2;
     }
 
     for (int i = 0; i < nthreads; i++) {

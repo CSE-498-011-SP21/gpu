@@ -5,7 +5,7 @@
 #include <utility>
 #include <memory>
 #include <atomic>
-#include <KVCache.cuh>
+#include <Cache.hh>
 #include <Slab.cuh>
 #include <StandardSlabDefinitions.cuh>
 #include <mutex>

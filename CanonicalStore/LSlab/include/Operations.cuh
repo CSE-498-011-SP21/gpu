@@ -7,6 +7,7 @@
 #include <iostream>
 #include <nvfunctional>
 #include <ImportantDefinitions.hh>
+#include <Compare.cuh>
 
 #ifndef OPERATIONS_CUH
 #define OPERATIONS_CUH

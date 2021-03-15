@@ -16,7 +16,7 @@ using Model = kvgpu::AnalyticalModel<unsigned long long>;
 //#else
 //using Model = kvgpu::SimplModel<unsigned long long>;
 //#endif
-using RB = std::shared_ptr<ResultsBuffers<data_t>>;
+using RB = std::shared_ptr<ResultsBuffers>;
 
 int totalBatches = 10000;
 int BATCHSIZE = 512;
@@ -197,25 +197,23 @@ int main(int argc, char **argv) {
         bool retry;
         int size = b.size();
         do {
+            retry = false;
             loadBalanceSet = true;
 
-            auto rb = std::make_shared<ResultsBuffers<data_t>>(sconf.batchSize);
+            auto rb = std::make_shared<ResultsBuffers>(sconf.batchSize);
             auto start = std::chrono::high_resolution_clock::now();
             client->batch(b, rb, start);
 
-
-            bool finished;
-
+            int count = 0;
             do {
-                finished = true;
-                for (int i = 0; i < size; i++) {
-                    if (rb->requestIDs[i] == -1) {
-                        finished = false;
-                        break;
+                Response response;
+                if (rb->response.try_pop(response)) {
+                    count++;
+                    if (response.retry) {
+                        retry = true;
                     }
                 }
-            } while (!finished && !rb->retryGPU);
-            retry = rb->retryGPU;
+            } while (count < size);
         } while (retry);
     }
 
@@ -238,7 +236,7 @@ int main(int argc, char **argv) {
 
             init_loadbalance(sconf.cpu_threads);
 
-            std::shared_ptr<ResultsBuffers<data_t>> lastResBuf = nullptr;
+            std::shared_ptr<ResultsBuffers> lastResBuf = nullptr;
 
             while (!reclaim) {
                 std::pair<BatchWrapper, RB> p;
@@ -267,17 +265,13 @@ int main(int argc, char **argv) {
                 client->batch(p.first, p.second, start);
             }
 
-            bool finished;
-
+            int count = 0;
             do {
-                finished = true;
-                for (int i = 0; i < sconf.batchSize; i++) {
-                    if (lastResBuf->requestIDs[i] == -1) {
-                        finished = false;
-                        break;
-                    }
+                Response response;
+                if (lastResBuf->response.try_pop(response)) {
+                    count++;
                 }
-            } while (!finished && !lastResBuf->retryGPU);
+            } while (count < sconf.batchSize);
 
         }, i));
     }
@@ -325,7 +319,7 @@ int main(int argc, char **argv) {
                 std::cerr << "Changed " << time * 1e3 << "\n";
             }*/
 
-            auto rb = std::make_shared<ResultsBuffers<data_t>>(sconf.batchSize);
+            auto rb = std::make_shared<ResultsBuffers>(sconf.batchSize);
 
             std::pair<BatchWrapper, RB> p = {
                     generateWorkloadBatch(&tseed, sconf.batchSize),
@@ -345,7 +339,7 @@ int main(int argc, char **argv) {
                     std::cerr << "Changed\n";
                 }*/
 
-                auto rb = std::make_shared<ResultsBuffers<data_t>>(sconf.batchSize);
+                auto rb = std::make_shared<ResultsBuffers>(sconf.batchSize);
 
                 std::pair<BatchWrapper, RB> p = {
                         generateWorkloadBatch(&tseed, sconf.batchSize),

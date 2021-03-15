@@ -5,7 +5,7 @@
 #include <gpuSystemConfig.cuh>
 #include <BatchData.hh>
 #include "StatData.cuh"
-#include <Cache.cuh>
+#include <Cache.hh>
 
 #ifndef KVCG_SLABS_HH
 #define KVCG_SLABS_HH
@@ -20,7 +20,7 @@ struct Slabs {
 
     Slabs() = delete;
 
-    typedef tbb::concurrent_queue<BatchData<unsigned long long, data_t> *> q_t;
+    typedef tbb::concurrent_queue<BatchData<unsigned long long> *> q_t;
 
     Slabs(const std::vector<PartitionedSlabUnifiedConfig> &config,
           std::shared_ptr<typename Cache::type> cache, std::shared_ptr<M> m) : done(false),
@@ -48,9 +48,9 @@ struct Slabs {
                                     int *requests = batchData->getBatchRequests();
                                     unsigned *hashes = batchData->getHashValues();
 
-                                    BatchData<unsigned long long, data_t> *holdonto = nullptr;
+                                    BatchData<unsigned long long> *holdonto = nullptr;
 
-                                    std::vector<std::pair<int, BatchData<unsigned long long, data_t> * >> writeBack;
+                                    std::vector<std::pair<int, BatchData<unsigned long long> * >> writeBack;
                                     writeBack.reserve(THREADS_PER_BLOCK * BLOCKS / 512);
                                     std::chrono::high_resolution_clock::time_point sampleTime;
                                     bool sampleTimeSet = false;
@@ -62,7 +62,7 @@ struct Slabs {
                                         }
                                         index = 0;
 
-                                        BatchData<unsigned long long, data_t> *res;
+                                        BatchData<unsigned long long> *res;
 
                                         auto timestampWriteToBatch = std::chrono::high_resolution_clock::now();
 
@@ -77,8 +77,8 @@ struct Slabs {
                                                 hashes[index + i] = holdonto->hashes[i];
                                             }
                                             index += holdonto->idx;
-                                            holdonto = nullptr;
                                             sampleTime = holdonto->start;
+                                            holdonto = nullptr;
                                             sampleTimeSet = true;
                                         }
 
@@ -143,37 +143,32 @@ struct Slabs {
                                             int timesGoingToCache = 0;
                                             for (auto &wb : writeBack) {
 
-                                                int rbLoc = wb.second->resBufStart;
-
                                                 for (int i = 0; i < wb.second->idx; ++i) {
 
                                                     if (wb.second->handleInCache[i]) {
                                                         timesGoingToCache++;
 
-                                                        wb.second->resBuf->resultValues[rbLoc + i] = _cache->missCallback(
+                                                        auto value = _cache->missCallback(
                                                                 wb.second->keys[i], values[wb.first + i], wb.second->hashes[i],
                                                                 *(this->model));
-                                                        // todo make sure to always write value to client.
-                                                        asm volatile("":: : "memory");
-                                                        wb.second->resBuf->requestIDs[rbLoc + i] = wb.second->requestID[i];
+                                                        wb.second->resBuf->response.push(Response(wb.second->requestID[i], value, false));
 
                                                     } else {
+                                                        data_t* value;
                                                         if (requests[wb.first + i] == REQUEST_REMOVE) {
-                                                            wb.second->resBuf->resultValues[rbLoc +
-                                                                                            i] = values[wb.first + i];
+                                                            value = values[wb.first + i];
+
                                                         } else if (requests[wb.first + i] == REQUEST_GET) {
                                                             V cpy = nullptr;
                                                             if (values[wb.first + i]) {
                                                                 cpy = new data_t(values[wb.first + i]->size);
                                                                 memcpy(cpy->data, values[wb.first + i]->data, cpy->size);
                                                             }
-                                                            wb.second->resBuf->resultValues[rbLoc + i] = cpy;
+                                                            value = cpy;
                                                         } else {
-                                                            wb.second->resBuf->resultValues[rbLoc + i] = nullptr;
+                                                            value = nullptr;
                                                         }
-
-                                                        asm volatile("":: : "memory");
-                                                        wb.second->resBuf->requestIDs[rbLoc + i] = wb.second->requestID[i];
+                                                        wb.second->resBuf->response.push(Response(wb.second->requestID[i], value, false));
                                                     }
                                                 }
                                                 delete wb.second;
@@ -223,7 +218,7 @@ struct Slabs {
         return ops;
     }
 
-    inline void batch(BatchData<unsigned long long, data_t> *b, int partition) {
+    inline void batch(BatchData<unsigned long long> *b, int partition) {
         gpu_qs[partition].push(b);
     }
 
