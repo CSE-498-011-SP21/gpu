@@ -114,7 +114,7 @@ public:
                           std::shared_ptr<typename Cache<K, typename Slab_t::VType>::type> c, std::shared_ptr<M> m,
                           int num_threads)
             : numslabs(
-            UseGPU ? s->numslabs : 0), slabs(s), cache(c), hits(0),
+            UseGPU ? s->getNumslabs() : 0), slabs(s), cache(c), hits(0),
               operations(0),
               start(std::chrono::high_resolution_clock::now()),
               model(m), cpuStageQ(new q_t[num_threads]),
@@ -155,7 +155,7 @@ public:
 
         bool dontDoGPU = false;
 
-        if (numslabs == 0 || slabs->load >= LOAD_THRESHOLD) {
+        if (numslabs == 0 || slabs->getLoad() >= LOAD_THRESHOLD) {
             dontDoGPU = true;
         }
 
@@ -196,7 +196,7 @@ public:
 
         bool dontDoGPU = false;
 
-        if (numslabs == 0 || slabs->load >= LOAD_THRESHOLD) {
+        if (numslabs == 0 || slabs->getLoad() >= LOAD_THRESHOLD) {
             dontDoGPU = true;
         }
 
@@ -389,8 +389,8 @@ public:
                 if (gpu_batches[i]->idx == 0) {
                     delete gpu_batches[i];
                 } else {
-                    slabs->load++;
-                    slabs->gpu_qs[i].push(gpu_batches[i]);
+                    slabs->increaseLoad();
+                    slabs->batch(gpu_batches[i], i);
                     vecOfBufs.push_back({numberNonEmpty, gpu_batches[i]->resBuf});
                 }
             }
@@ -454,7 +454,7 @@ public:
             std::cout
                     << "Time from start (s)\tTime spent responding (ms)\tTime in batch fn (ms)\tTime Dequeueing (ms)\tFraction that goes to cache\tDuration (ms)\tFill\tThroughput GPU "
                     << i << " (Mops)\tQ Time till batch fn (ms)" << std::endl;
-            for (StatData &s : slabs->mops[i]) {
+            for (StatData &s : slabs->getMops()[i]) {
 
                 std::cout << std::chrono::duration<double>(s.timestampEnd - start).count() << "\t"
                           << std::chrono::duration<double>(s.timestampEnd - s.timestampWriteBack).count() * 1e3 << "\t"
@@ -695,8 +695,8 @@ private:
     inline void sendGPUBatches(bool &dontDoGPU, std::vector<BatchData<K, V> *> &gpu_batches) {
         if (!dontDoGPU) {
             for (int i = 0; i < numslabs; ++i) {
-                slabs->load++;
-                slabs->gpu_qs[i].push(gpu_batches[i]);
+                slabs->increaseLoad();
+                slabs->batch(gpu_batches[i], i);
             }
         } else {
             for (int i = 0; i < numslabs; ++i) {
@@ -779,8 +779,8 @@ private:
                 if (gpu_batches2[i]->idx > 0) {
                     gpu_batches2[i]->resBufStart = sizeForGPUBatches;
                     sizeForGPUBatches += gpu_batches2[i]->idx;
-                    slabs->load++;
-                    slabs->gpu_qs[i].push(gpu_batches2[i]);
+                    slabs->increaseLoad();
+                    slabs->batch(gpu_batches2[i], i);
                 } else {
                     delete gpu_batches2[i];
                 }
