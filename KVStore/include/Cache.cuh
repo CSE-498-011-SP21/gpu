@@ -7,7 +7,7 @@
 
 class Cache {
 public:
-    typedef kvgpu::KVCacheWrapper<unsigned long long, 1000000, 8> type;
+    typedef kvgpu::KVCacheWrapper<1000000, 8> type;
 };
 
 #endif //KVCG_CACHE_CUH

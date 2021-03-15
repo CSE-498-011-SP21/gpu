@@ -412,9 +412,10 @@ namespace kvgpu {
      * @tparam SETS
      * @tparam N
      */
-    template<typename K, unsigned SETS = 524288 / sizeof(LockingPair<K, data_t *>) / 8, unsigned N = 8>
+    template<unsigned SETS = 524288 / sizeof(LockingPair<unsigned long long, data_t *>) / 8, unsigned N = 8>
     class KVCacheWrapper {
     private:
+        using K = unsigned long long;
     public:
         /**
          * Creates cache
