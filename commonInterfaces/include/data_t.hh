@@ -5,6 +5,9 @@
 #ifndef KVCG_DATA_T_HH
 #define KVCG_DATA_T_HH
 
+/**
+ * Tracks data in main memory. Does not free the underlying data when destroyed.
+ */
 struct data_t {
 
     data_t() : size(0), data(nullptr) {}

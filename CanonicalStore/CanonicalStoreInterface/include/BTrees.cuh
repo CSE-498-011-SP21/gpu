@@ -7,26 +7,25 @@
 #include "StatData.cuh"
 #include <Cache.hh>
 
-#ifndef KVCG_SLABS_HH
-#define KVCG_SLABS_HH
-
-const int MAX_ATTEMPTS = 1;
+#ifndef KVCG_BTREES_HH
+#define KVCG_BTREES_HH
 
 /**
- *
+ * Copy of Slabs. This is to serve as a BTree container.
  * @tparam M the Model
  */
 template<typename M>
-struct Slabs {
+struct BTrees {
+    const int MAX_ATTEMPTS = 1;
 
     using V = data_t *;
     using VType = data_t *;
 
-    Slabs() = delete;
+    BTrees() = delete;
 
     typedef tbb::concurrent_queue<BatchData<unsigned long long> *> q_t;
 
-    Slabs(const std::vector<PartitionedSlabUnifiedConfig> &config,
+    BTrees(const std::vector<PartitionedSlabUnifiedConfig> &config,
           std::shared_ptr<typename Cache::type> cache, std::shared_ptr<M> m) : done(false),
                                                                                   mops(new tbb::concurrent_vector<StatData>[config.size()]),
                                                                                   _cache(cache), ops(0),
@@ -36,7 +35,7 @@ struct Slabs {
             if (gpusToSlab.find(config[i].gpu) == gpusToSlab.end())
                 gpusToSlab[config[i].gpu] = std::make_shared<SlabUnified<unsigned long long, V >>(config[i].size, config[i].gpu);
         }
-        // This is the queue that Slabs.batch() adds to.
+        // This is the queue that this.batch() adds to.
         gpu_qs = new q_t[gpusToSlab.size()];
         numslabs = gpusToSlab.size();
 
@@ -201,8 +200,8 @@ struct Slabs {
         }
     }
 
-    ~Slabs() {
-        std::cerr << "Slabs deleted\n";
+    ~BTrees() {
+        std::cerr << "BTrees deleted\n";
         done = true;
         for (auto &t : threads) {
             if (t.joinable())
@@ -245,14 +244,16 @@ struct Slabs {
 
 private:
     std::atomic_int load;
+    /// Work queue for the threads to take from
     q_t *gpu_qs;
     int numslabs;
     std::vector<std::thread> threads;
     std::atomic_bool done;
+    /// Holds timing data
     tbb::concurrent_vector<StatData> *mops;
     std::shared_ptr<typename Cache::type> _cache;
     std::atomic_size_t ops;
     std::shared_ptr<M> model;
 };
 
-#endif //KVCG_SLABS_HH
+#endif //KVCG_BTREES_HH
