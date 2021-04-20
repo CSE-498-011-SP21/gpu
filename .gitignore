@@ -1,3 +1,7 @@
 /*build*
 /.idea
 .DS_STORE
+
+# Data files
+*.json
+*.tsv

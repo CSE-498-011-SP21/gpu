@@ -7,6 +7,10 @@
 #ifndef KVGPU_KVSTORECTX_CUH
 #define KVGPU_KVSTORECTX_CUH
 
+/**
+ * Used to return the correct client type (Combinations of enabled CPU Cache and GPU)
+ * @tparam M
+ */
 template<typename M>
 class KVStoreCtx {
 private:

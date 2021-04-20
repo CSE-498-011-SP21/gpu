@@ -25,27 +25,41 @@ struct Slabs {
     Slabs() = delete;
 
     typedef tbb::concurrent_queue<BatchData<unsigned long long> *> q_t;
-
+    
+    /**
+     * This is a pool of thread which each reads from a concurrent queue "gpu_qs". The queue contains a pointer to "BatchData"
+     * @param config Vector of configs, one per CUDA Stream
+     * @param cache KVCacheWrapper defined in Cache.hh, The Hot Cache on the CPU?
+     * @param m The Model, AnalyticalModel in Model.hh
+     */
     Slabs(const std::vector<PartitionedSlabUnifiedConfig> &config,
           std::shared_ptr<typename Cache::type> cache, std::shared_ptr<M> m) : done(false),
                                                                                   mops(new tbb::concurrent_vector<StatData>[config.size()]),
                                                                                   _cache(cache), ops(0),
                                                                                   load(0), model(m) {
+        
         std::unordered_map<int, std::shared_ptr<SlabUnified<unsigned long long, V>>> gpusToSlab;
+        // Populates the map. If a SlabUnified is not assigned to the GPU, create one and assign it.
         for (int i = 0; i < config.size(); i++) {
             if (gpusToSlab.find(config[i].gpu) == gpusToSlab.end())
                 gpusToSlab[config[i].gpu] = std::make_shared<SlabUnified<unsigned long long, V >>(config[i].size, config[i].gpu);
         }
-        // This is the queue that Slabs.batch() adds to.
+        // One batching queue for each GPU we have slabed.
         gpu_qs = new q_t[gpusToSlab.size()];
         numslabs = gpusToSlab.size();
 
+        // For each stream,
         for (int i = 0; i < config.size(); i++) {
             //config[i].stream;
             threads.push_back(
                     std::thread([this](int tid, int gpu, std::shared_ptr<SlabUnified<unsigned long long, V>> slab,
                                        cudaStream_t stream) {
+                        
+                                    // Sets the device that subsequent CUDA operations will work on.
                                     slab->setGPU();
+                                    // Not sure what the BatchBuffer is used for. It seems to use a custom GroupAllocator,
+                                    // which allocates according to "Group Affinity". Seems to be a custom memory location
+                                    // where we can buffer data before sending it to the GPU.
                                     auto batchData = new BatchBuffer<unsigned long long, V>();
 
                                     unsigned long long *keys = batchData->getBatchKeys();
@@ -53,6 +67,8 @@ struct Slabs {
                                     int *requests = batchData->getBatchRequests();
                                     unsigned *hashes = batchData->getHashValues();
 
+                                    // BatchData has fields for request info and a response buffer. However, I'm not
+                                    // exactly sure what holdonto is used for.
                                     BatchData<unsigned long long> *holdonto = nullptr;
 
                                     std::vector<std::pair<int, BatchData<unsigned long long> * >> writeBack;
@@ -60,7 +76,13 @@ struct Slabs {
                                     std::chrono::high_resolution_clock::time_point sampleTime;
                                     bool sampleTimeSet = false;
                                     int index = THREADS_PER_BLOCK * BLOCKS;
+                                    
+                                    // Done with setup, this is what the thread does until Slabs is destructed. Would it be better for
+                                    // all of these threads to use a condvar and wake up when there's data?
+                                    // Maybe this "done" atomic would be a point of contention.
+                                    // Though it's possible that each thread spends most of its time in the "batching" stage.
                                     while (!done.load()) {
+                                        // Clear the writeBack & Set all of the requests to empty.
                                         writeBack.clear();
                                         for (int i = 0; i < index; i++) {
                                             requests[i] = REQUEST_EMPTY;
@@ -71,6 +93,8 @@ struct Slabs {
 
                                         auto timestampWriteToBatch = std::chrono::high_resolution_clock::now();
 
+                                        // Maybe holdonto is leftover stuff from somewhere? It seems to be added to writeBack
+                                        // before any work is done.
                                         if (holdonto) {
                                             //std::cerr << "Hold onto set " << tid << std::endl;
                                             writeBack.push_back({index, holdonto});
@@ -90,6 +114,7 @@ struct Slabs {
                                         int attempts = 0;
 
                                         while (attempts < MAX_ATTEMPTS && index < THREADS_PER_BLOCK * BLOCKS) {
+                                            // Try to get some BatchData from the workqueue for our gpu.
                                             if (this->gpu_qs[gpu].try_pop(res)) {
                                                 load--;
                                                 //std::cerr << "Got a batch on handler thread " << tid << "\n";
@@ -145,40 +170,44 @@ struct Slabs {
                                             gpuErrchk(cudaEventElapsedTime(&t, start, stop));
                                             gpuErrchk(cudaEventDestroy(start));
                                             gpuErrchk(cudaEventDestroy(stop));
+
+                                            // Handle writing results back to the CPU
                                             int timesGoingToCache = 0;
-                                            for (auto &wb : writeBack) {
-
-                                                for (int i = 0; i < wb.second->idx; ++i) {
-
-                                                    if (wb.second->handleInCache[i]) {
+                                            for (auto &[wbIndex, pBatchData] : writeBack) {
+                                                // Guessing idx is how many entries are in the BatchData
+                                                for (int i = 0; i < pBatchData->idx; ++i) {
+                                                    // FIXME: Where is handleInCache determined? Couldn't find in a cursory look through,
+                                                    //  But it's definitely set to true somewhere. (Maybe in GPU code?)
+                                                    if (pBatchData->handleInCache[i]) {
                                                         timesGoingToCache++;
 
                                                         auto value = _cache->missCallback(
-                                                                wb.second->keys[i], values[wb.first + i], wb.second->hashes[i],
+                                                                pBatchData->keys[i], values[wbIndex + i], pBatchData->hashes[i],
                                                                 *(this->model));
-                                                        wb.second->resBuf->send(Response(wb.second->requestID[i], value, false));
+                                                        pBatchData->resBuf->send(Response(pBatchData->requestID[i], value, false));
 
                                                     } else {
                                                         data_t* value;
-                                                        if (requests[wb.first + i] == REQUEST_REMOVE) {
-                                                            value = values[wb.first + i];
+                                                        if (requests[wbIndex + i] == REQUEST_REMOVE) {
+                                                            value = values[wbIndex + i];
 
-                                                        } else if (requests[wb.first + i] == REQUEST_GET) {
+                                                        } else if (requests[wbIndex + i] == REQUEST_GET) {
                                                             V cpy = nullptr;
-                                                            if (values[wb.first + i]) {
-                                                                cpy = new data_t(values[wb.first + i]->size);
-                                                                memcpy(cpy->data, values[wb.first + i]->data, cpy->size);
+                                                            if (values[wbIndex + i]) {
+                                                                cpy = new data_t(values[wbIndex + i]->size);
+                                                                memcpy(cpy->data, values[wbIndex + i]->data, cpy->size);
                                                             }
                                                             value = cpy;
                                                         } else {
                                                             value = nullptr;
                                                         }
-                                                        wb.second->resBuf->send(Response(wb.second->requestID[i], value, false));
+                                                        pBatchData->resBuf->send(Response(pBatchData->requestID[i], value, false));
                                                     }
                                                 }
-                                                delete wb.second;
+                                                delete pBatchData;
                                             }
 
+                                            // Count the OPS and handle other performance metrics
                                             mops[gpu].push_back({sampleTime,
                                                                         /*timestampEnd = */
                                                                  std::chrono::high_resolution_clock::now(),

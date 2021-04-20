@@ -29,8 +29,8 @@ template<typename M>
 class KVStore {
 public:
 
-//    using Slab_t = Slabs<M>;
-    using Slab_t = BTrees<M>;
+    using Slab_t = Slabs<M>;
+//    using Slab_t = BTrees<M>;
 
     KVStore() : cache(std::make_shared<typename Cache::type>()), model(new M()) {
         slab = std::make_shared<Slab_t>(STANDARD_CONFIG, this->cache, model);

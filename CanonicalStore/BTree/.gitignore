@@ -46,10 +46,10 @@
 **/googletest-build/
 **/googletest-download/
 
-#VS code dir
+#IDE Settings
 .vscode/
+.idea/
 
 #build and debug dirs
-build/
-debug/
-release/
+*build*/
+

@@ -1,6 +1,7 @@
-# GpuBTree
-https://github.com/owensgroup/GpuBTree
+# KVCG BTree Notes:
+This is a modified version of the GpuBTree found here: https://github.com/owensgroup/GpuBTree. Their readme is posted below.
 
+# GpuBTree
 A GPU B-Tree optimized for updates.
 
 ## Publication

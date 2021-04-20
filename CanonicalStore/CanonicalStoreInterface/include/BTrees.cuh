@@ -25,20 +25,32 @@ struct BTrees {
 
     typedef tbb::concurrent_queue<BatchData<unsigned long long> *> q_t;
 
+    /**
+     * This is a pool of threads which read from a
+     * @param config Vector of configs, one per CUDA Stream
+     * @param cache KVCacheWrapper defined in Cache.hh, The Hot Cache on the CPU?
+     * @param m The Model, AnalyticalModel in Model.hh
+     */
     BTrees(const std::vector<PartitionedSlabUnifiedConfig> &config,
           std::shared_ptr<typename Cache::type> cache, std::shared_ptr<M> m) : done(false),
                                                                                   mops(new tbb::concurrent_vector<StatData>[config.size()]),
                                                                                   _cache(cache), ops(0),
                                                                                   load(0), model(m) {
         std::unordered_map<int, std::shared_ptr<SlabUnified<unsigned long long, V>>> gpusToSlab;
-        for (int i = 0; i < config.size(); i++) {
-            if (gpusToSlab.find(config[i].gpu) == gpusToSlab.end())
-                gpusToSlab[config[i].gpu] = std::make_shared<SlabUnified<unsigned long long, V >>(config[i].size, config[i].gpu);
+
+        // TODO: Find a clean way to enforce the single stream requirement statically.
+        assert(("BTree is only correct with a single CUDA Stream.", config.size() == 1));
+
+        // Populates the map. If a SlabUnified is not assigned to the GPU, create one and assign it.
+        for (auto i : config) {
+            if (gpusToSlab.find(i.gpu) == gpusToSlab.end())
+                gpusToSlab[i.gpu] = std::make_shared<SlabUnified<unsigned long long, V >>(i.size, i.gpu);
         }
         // This is the queue that this.batch() adds to.
         gpu_qs = new q_t[gpusToSlab.size()];
         numslabs = gpusToSlab.size();
 
+        // For each stream,
         for (int i = 0; i < config.size(); i++) {
             //config[i].stream;
             threads.push_back(
