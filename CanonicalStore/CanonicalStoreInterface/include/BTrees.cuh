@@ -27,7 +27,7 @@ struct BTrees {
 
     /**
      * This is a pool of threads which read from a
-     * @param config Vector of configs, one per CUDA Stream
+     * @param config Vector of configs, one per CUDA Stream (per GPU as well?)
      * @param cache KVCacheWrapper defined in Cache.hh, The Hot Cache on the CPU?
      * @param m The Model, AnalyticalModel in Model.hh
      */
