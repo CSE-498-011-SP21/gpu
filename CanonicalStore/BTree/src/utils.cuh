@@ -23,7 +23,8 @@
 /************************************************************************************/
 /************************************************************************************/
 
-#pragma once
+#ifndef UTILS_CUH
+#define UTILS_CUH
 
 #include <iostream>
 
@@ -97,3 +98,5 @@ class GpuTimer {
   float temp_time = 0.0f;
   cudaEvent_t start, stop;
 };
+
+#endif

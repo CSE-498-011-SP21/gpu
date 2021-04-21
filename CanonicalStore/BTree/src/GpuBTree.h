@@ -28,8 +28,7 @@
 
 #include "allocator/bool_allocator.cuh"
 
-#include "map/kernels/map_warps.cu"
-#include "map/kernels/map_kernels.cu"
+#include "map/kernels/map_warps.cuh"
+#include "map/kernels/map_kernels.cuh"
 
 #include "map/GpuBTree.cuh"
-#include "map/host.cu"

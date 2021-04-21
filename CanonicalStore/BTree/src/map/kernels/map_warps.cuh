@@ -23,7 +23,11 @@
 /************************************************************************************/
 /************************************************************************************/
 
-#pragma once
+#include "../../global.cuh"
+#include "../../utils.cuh"
+
+#ifndef MAP_WARPS_CUH
+#define MAP_WARPS_CUH
 
 namespace GpuBTree {
 namespace warps {
@@ -804,3 +808,4 @@ __device__ void concurrent_search_unit(bool& to_be_searched,
 }
 }  // namespace warps
 }  // namespace GpuBTree
+#endif

@@ -23,10 +23,12 @@
 /************************************************************************************/
 /************************************************************************************/
 
-#pragma once
-#include <stdio.h>
 
+#include <cstdio>
 #include <cstdint>
+
+#ifndef BOOL_ALLOCATOR_CUH
+#define BOOL_ALLOCATOR_CUH
 
 class BoolAllocator {
  public:
@@ -70,3 +72,4 @@ class BoolAllocator {
   uint32_t MAX_SIZE = 1 << 25;
   uint32_t* d_count;
 };
+#endif

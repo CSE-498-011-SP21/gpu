@@ -23,7 +23,8 @@
 /************************************************************************************/
 /************************************************************************************/
 
-#pragma once
+#ifndef GLOBAL_CUH
+#define GLOBAL_CUH
 
 enum class SourceT {
   DEVICE,
@@ -40,3 +41,5 @@ enum class OperationT {
 #define WARP_MASK 0xFFFFFFFF
 #define NODE_WIDTH 32
 #define WARP_WIDTH 32
+
+#endif

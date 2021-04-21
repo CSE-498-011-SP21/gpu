@@ -6,6 +6,7 @@
 #include <BatchData.cuh>
 #include "StatData.cuh"
 #include <Cache.hh>
+#include "GpuBTree.h"
 
 #ifndef KVCG_BTREES_HH
 #define KVCG_BTREES_HH

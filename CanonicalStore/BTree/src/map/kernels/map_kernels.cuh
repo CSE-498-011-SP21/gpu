@@ -23,9 +23,11 @@
 /************************************************************************************/
 /************************************************************************************/
 
-#pragma once
-
 #include <cstdint>
+#include "map_warps.cuh"
+
+#ifndef MAP_KERNELS_CUH
+#define MAP_KERNELS_CUH
 
 namespace GpuBTree {
 namespace kernels {
@@ -203,3 +205,5 @@ __global__ void concurrent_ops_b_tree(uint32_t* d_root,
 }
 };  // namespace kernels
 };  // namespace GpuBTree
+
+#endif
