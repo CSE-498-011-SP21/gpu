@@ -13,6 +13,12 @@
 int LOAD_THRESHOLD = BLOCKS * 10000;
 const size_t Q_CAP = 2;
 
+/**
+ * A Request for the KVStore. requestInteger is an enum which can take on the values specified in RequestTypes.hh.
+ * 1 Insert, 2 Get, 3 Remove, 4 Empty
+ * @tparam K key type
+ * @tparam V value type
+ */
 template<typename K, typename V>
 struct RequestWrapper {
     K key;

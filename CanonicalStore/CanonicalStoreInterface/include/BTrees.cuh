@@ -6,63 +6,71 @@
 #include <BatchData.cuh>
 #include "StatData.cuh"
 #include <Cache.hh>
+#include "GpuBTree.h"
 
-#ifndef KVCG_SLABS_HH
-#define KVCG_SLABS_HH
-
-const int MAX_ATTEMPTS = 1;
+#ifndef KVCG_BTREES_HH
+#define KVCG_BTREES_HH
 
 /**
- *
+ * Copy of Slabs. This is to serve as a BTree container.
  * @tparam M the Model
  */
 template<typename M>
-struct Slabs {
+struct BTrees {
+    const int MAX_ATTEMPTS = 1;
 
     using V = data_t *;
     using VType = data_t *;
 
-    Slabs() = delete;
+    BTrees() = delete;
 
+    // TODO: Does this still need to be concurrent if we have only a single stream per GPU?
     typedef tbb::concurrent_queue<BatchData<unsigned long long> *> q_t;
-    
+
     /**
      * This is a pool of thread which each reads from a concurrent queue "gpu_qs". The queue contains a pointer to "BatchData"
      * @param config Vector of configs, one per CUDA Stream
      * @param cache KVCacheWrapper defined in Cache.hh, The Hot Cache on the CPU?
      * @param m The Model, AnalyticalModel in Model.hh
      */
-    Slabs(const std::vector<PartitionedSlabUnifiedConfig> &config,
+    BTrees(const std::vector<PartitionedSlabUnifiedConfig> &config,
           std::shared_ptr<typename Cache::type> cache, std::shared_ptr<M> m) : done(false),
-                                                                                  mops(new tbb::concurrent_vector<StatData>[config.size()]),
-                                                                                  _cache(cache), ops(0),
-                                                                                  load(0), model(m) {
-        
-        std::unordered_map<int, std::shared_ptr<SlabUnified<unsigned long long, V>>> gpusToSlab;
+                                                                               mops(new tbb::concurrent_vector<StatData>[config.size()]),
+                                                                               _cache(cache), ops(0),
+                                                                               load(0), model(m) {
+
+        std::unordered_map<int, std::shared_ptr<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>>> gpus;
         // Populates the map. If a SlabUnified is not assigned to the GPU, create one and assign it.
         for (auto c : config) {
-            if (gpusToSlab.find(c.gpu) == gpusToSlab.end())
-                gpusToSlab[c.gpu] = std::make_shared<SlabUnified<unsigned long long, V >>(c.size, c.gpu);
+            if (gpus.find(c.gpu) == gpus.end())
+                gpus[c.gpu] = std::make_shared<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>>();
+            else {
+                // This means we've already slabed this gpu. As multiple streams on the same GPU is not valid for the BTree,
+                // We need to throw an error
+                throw std::runtime_error("BTrees are not able to be used with multiple streams on the same GPU\nChange to using Slabs if you want multiple streams.\n");
+            }
         }
+
         // One batching queue for each GPU we have slabbed.
-        gpu_qs = new q_t[gpusToSlab.size()];
-        numslabs = gpusToSlab.size();
+        gpu_qs = new q_t[gpus.size()];
+        numslabs = gpus.size();
 
         // For each stream, start a thread which listens to the queue for that GPU.
         for (int i = 0; i < config.size(); i++) {
             //config[i].stream;
-            threads.emplace_back(threadFunction, i, config[i].gpu, gpusToSlab[config[i].gpu], config[i].stream);
+            threads.emplace_back(threadFunction, i, config[i].gpu, gpus[config[i].gpu], config[i].stream);
         }
     }
 
     /**
      * Auto is not allowed for static members of a struct.
      */
-    std::function<void(int, int, std::shared_ptr<SlabUnified<unsigned long long, V>>, cudaStream_t)>
-            threadFunction = [this](int tid, int gpu, std::shared_ptr<SlabUnified<unsigned long long, V>> slab, cudaStream_t stream) {
+    std::function<void(int, int, std::shared_ptr<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>>, cudaStream_t)>
+            threadFunction = [this](int tid, int gpu, std::shared_ptr<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>> btree, cudaStream_t stream) {
 
         // Sets the device that subsequent CUDA operations will work on.
-        slab->setGPU();
+        gpuErrchk(cudaSetDevice(gpu));
+
         // Not sure what the BatchBuffer is used for. It seems to use a custom GroupAllocator,
         // which allocates according to "Group Affinity". Seems to be a custom memory location
         // where we can buffer data before sending it to the GPU.
@@ -166,13 +174,42 @@ struct Slabs {
                 gpuErrchk(cudaEventCreate(&start));
                 gpuErrchk(cudaEventCreate(&stop));
 
+                // Currently I include this translation layer as part of the batching. Maybe I shouldn't? It will include lots of moving memory to the GPU anyways.
+                gpuErrchk(cudaEventRecord(start, stream));
+
                 float t;
 
-                slab->moveBufferToGPU(batchData, stream);
-                gpuErrchk(cudaEventRecord(start, stream));
-                slab->diy_batch(batchData, ceil(index / 512.0), 512, stream);
+                // Convert the slab operations into the enum that the Btree understands. S
+                // see RequestTypes.hh for Slab, and global.cuh for Btree definitions
+                std::vector<OperationT> btree_ops;
+                btree_ops.reserve(index);
+                for (uint32_t i = 0; i < index; ++i) {
+                    // Check the key sizes in the meantime. This is test code, may want to remove later if we know the keysizes are ok.
+                    if (keys[i] > std::numeric_limits<unsigned int>::max()) {
+                        std::cerr << ">4B Key detected: " << keys[i] << std::endl;
+                        exit(132);
+                    }
+
+                    // Is the "Empty" slab operation the same as the NOP operation for the BTree?
+                    if (requests[i] == 0) {
+                        btree_ops[i] = OperationT::NOP;
+                    } else if (requests[i] == 1) {
+                        // Insert
+                        btree_ops[i] = OperationT::INSERT;
+                    } else if (requests[i] == 2) {
+                        // Query
+                        btree_ops[i] = OperationT::QUERY;
+                    } else if (requests[i] == 3) {
+                        // Delete
+                        btree_ops[i] = OperationT::DELETE;
+                    }
+                }
+
+                // TODO: Will need a way to pass through the streamId. Setting to zero is fine for now for only one GPU.
+                btree->diyConcurrentOperations(keys, values, btree_ops.data(), index);
+
+                // FIXME: This batching metric will also include lots of moving memory to the GPU. Not exactly useful.
                 gpuErrchk(cudaEventRecord(stop, stream));
-                slab->moveBufferToCPU(batchData, stream);
                 gpuErrchk(cudaStreamSynchronize(stream));
 
                 auto timestampWriteBack = std::chrono::high_resolution_clock::now();
@@ -185,7 +222,8 @@ struct Slabs {
                 for (auto &[wbIndex, pBatchData] : writeBack) {
                     // Guessing idx is how many entries are in the BatchData
                     for (int i = 0; i < pBatchData->idx; ++i) {
-                        // FIXME: Where is handleInCache determined? Is it not changed in the GPU code?
+                        // FIXME: Where is handleInCache determined? Couldn't find in a cursory look through,
+                        //  But it's definitely set to true somewhere. (Maybe in GPU code?)
                         if (pBatchData->handleInCache[i]) {
                             timesGoingToCache++;
 
@@ -234,8 +272,8 @@ struct Slabs {
         if (stream != cudaStreamDefault) gpuErrchk(cudaStreamDestroy(stream));
     };
 
-    ~Slabs() {
-        std::cerr << "Slabs deleted\n";
+    ~BTrees() {
+        std::cerr << "BTrees deleted\n";
         done = true;
         for (auto &t : threads) {
             if (t.joinable())
@@ -278,14 +316,16 @@ struct Slabs {
 
 private:
     std::atomic_int load;
+    /// Work queue for the threads to take from
     q_t *gpu_qs;
     int numslabs;
     std::vector<std::thread> threads;
     std::atomic_bool done;
+    /// Holds timing data
     tbb::concurrent_vector<StatData> *mops;
     std::shared_ptr<typename Cache::type> _cache;
     std::atomic_size_t ops;
     std::shared_ptr<M> model;
 };
 
-#endif //KVCG_SLABS_HH
+#endif //KVCG_BTREES_HH

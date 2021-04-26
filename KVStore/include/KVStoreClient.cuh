@@ -12,6 +12,10 @@
 #ifndef KVGPU_KVSTORECLIENT_CUH
 #define KVGPU_KVSTORECLIENT_CUH
 
+/**
+ * Defines some general methods that every model needs to implement.
+ * @tparam M the Model
+ */
 template< typename M>
 class GeneralClient {
 public:
@@ -81,6 +85,14 @@ struct ChooseInternalClient<M, Slab_t, true, false> {
 
 };
 
+/**
+ *
+ * @tparam M
+ * @tparam UseCache
+ * @tparam UseGPU
+ * @tparam BTree This parameter is only used if UseGPU is also enabled. It causes the LSlab implementation to be replaced
+ * By a Gpu BTree
+ */
 template<typename M, bool UseCache = true, bool UseGPU = true>
 class KVStoreClient : public GeneralClient<M> {
 private:
