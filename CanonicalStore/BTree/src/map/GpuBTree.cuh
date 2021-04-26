@@ -27,6 +27,7 @@
 #include <cstdint>
 #include "../allocator/bool_allocator.cuh"
 #include "kernels/map_kernels.cuh"
+#include "SecondaryIndex.cuh"
 
 #ifndef GPU_B_TREE_CUH
 #define GPU_B_TREE_CUH
@@ -288,6 +289,106 @@ namespace GpuBTree {
             }
 
             return cudaSuccess;
+        }
+    };
+
+
+    /**
+     * Container class to handle usage of the secondary index. I spent a whole day fooling around
+     * with templates and std::conditional, but honestly this is probably the easiest way to
+     * do this.
+     *
+     * @tparam KeyT
+     * @tparam ValueT
+     * @tparam SizeT
+     * @tparam AllocatorT
+     */
+    template<typename KeyT,
+            typename ValueT,
+            typename AllocatorT = BoolAllocator>
+    class GpuBTreeMapSecondaryIndex {
+        GpuBTreeMap<uint32_t, uint32_t, uint32_t, AllocatorT> map;
+        SecondaryIndex<uint32_t, ValueT> secondaryIndex;
+
+
+    public:
+        explicit GpuBTreeMapSecondaryIndex(AllocatorT* mem_allocator = nullptr, int device_id = 0) : map(mem_allocator, device_id) {
+
+        }
+
+        cudaError_t init(AllocatorT mem_allocator, uint32_t* root_, int deviceId = 0) {
+            return map.init(mem_allocator, root_, deviceId);
+        }
+
+        void free() {
+            map.free();
+        }
+
+        __host__ __device__ AllocatorT* getAllocator() { return map.getAllocator(); }
+        __host__ __device__ uint32_t* getRoot() { return map.getRoot(); }
+
+        /**
+         * This can only handle searches and insertions.
+         * @param keys
+         * @param values
+         * @param ops
+         * @param count
+         * @return
+         */
+        void diyConcurrentOperations(KeyT* keys,
+                                            ValueT* values,
+                                            OperationT* ops,
+                                            uint32_t count) {
+
+            std::vector<uint32_t> keys_narrow;
+            std::vector<uint32_t> values_hash;
+            keys_narrow.reserve(count);
+            values_hash.reserve(count);
+
+            for (uint32_t i = 0; i < count; ++i) {
+                // Narrow all of the keys.
+                keys_narrow[i] = static_cast<uint32_t>(keys[i]);
+
+                // Put insertion values into the secondary index.
+                if (ops[i] == OperationT::INSERT) {
+                    uint8_t loc;
+                    uint32_t hash;
+                    SIBucket<uint32_t, ValueT>* b = secondaryIndex.alloc(loc, hash);
+
+                    std::pair<uint32_t, ValueT> p = {keys_narrow[i], values[i]};
+                    (*b).set(loc, p);
+                    values_hash[i] = hash;
+                }
+            }
+
+            // Execute on GPU
+            map.concurrentOperations(keys_narrow.data(), values_hash.data(), ops, count, SourceT::HOST);
+
+            // Postprocess, hash lookup all of the old values.
+            // Can get rid of the dealloc thing because we're never removing data.
+            std::vector<uint32_t> dealloc;
+            for (int i = 0; i < count; i++) {
+                if (ops[i] == OperationT::QUERY) {
+                    uint32_t val = values_hash[i];
+                    std::pair<uint32_t, ValueT> p;
+                    SIBucket<uint32_t, ValueT>* b = secondaryIndex.getBucket(val);
+                    // 0xFF narrows val to just one byte.
+                    b->get(val & 0xFF, p);
+
+                    // If the key matches, replace the value with the looked up one.
+                    if(keys_narrow[i] == p.first) {
+                        values[i] = p.second;
+                    }
+                }
+                // TODO: Removes are not supported in the kernel, but we need to free space in the secondary index.
+                else if(ops[i] == OperationT::DELETE){
+                    dealloc.push_back(values_hash[i]);
+                }
+            }
+            for (auto &d : dealloc){
+                SIBucket<uint32_t,ValueT>* b = secondaryIndex.getBucket(d);
+                b->free(d & 0xFF);
+            }
         }
     };
 }

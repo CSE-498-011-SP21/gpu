@@ -32,3 +32,4 @@
 #include "map/kernels/map_kernels.cuh"
 
 #include "map/GpuBTree.cuh"
+#include "map/SecondaryIndex.cuh"

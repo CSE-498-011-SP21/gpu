@@ -39,11 +39,11 @@ struct BTrees {
                                                                                _cache(cache), ops(0),
                                                                                load(0), model(m) {
 
-        std::unordered_map<int, std::shared_ptr<SlabUnified<unsigned long long, V>>> gpusToSlab;
+        std::unordered_map<int, std::shared_ptr<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>>> gpus;
         // Populates the map. If a SlabUnified is not assigned to the GPU, create one and assign it.
         for (auto c : config) {
-            if (gpusToSlab.find(c.gpu) == gpusToSlab.end())
-                gpusToSlab[c.gpu] = std::make_shared<SlabUnified<unsigned long long, V >>(c.size, c.gpu);
+            if (gpus.find(c.gpu) == gpus.end())
+                gpus[c.gpu] = std::make_shared<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>>();
             else {
                 // This means we've already slabed this gpu. As multiple streams on the same GPU is not valid for the BTree,
                 // We need to throw an error
@@ -52,24 +52,25 @@ struct BTrees {
         }
 
         // One batching queue for each GPU we have slabbed.
-        gpu_qs = new q_t[gpusToSlab.size()];
-        numslabs = gpusToSlab.size();
+        gpu_qs = new q_t[gpus.size()];
+        numslabs = gpus.size();
 
         // For each stream, start a thread which listens to the queue for that GPU.
         for (int i = 0; i < config.size(); i++) {
             //config[i].stream;
-            threads.emplace_back(threadFunction, i, config[i].gpu, gpusToSlab[config[i].gpu], config[i].stream);
+            threads.emplace_back(threadFunction, i, config[i].gpu, gpus[config[i].gpu], config[i].stream);
         }
     }
 
     /**
      * Auto is not allowed for static members of a struct.
      */
-    std::function<void(int, int, std::shared_ptr<SlabUnified<unsigned long long, V>>, cudaStream_t)>
-            threadFunction = [this](int tid, int gpu, std::shared_ptr<SlabUnified<unsigned long long, V>> slab, cudaStream_t stream) {
+    std::function<void(int, int, std::shared_ptr<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>>, cudaStream_t)>
+            threadFunction = [this](int tid, int gpu, std::shared_ptr<GpuBTree::GpuBTreeMapSecondaryIndex<unsigned long long, V>> btree, cudaStream_t stream) {
 
         // Sets the device that subsequent CUDA operations will work on.
-        slab->setGPU();
+        gpuErrchk(cudaSetDevice(gpu));
+
         // Not sure what the BatchBuffer is used for. It seems to use a custom GroupAllocator,
         // which allocates according to "Group Affinity". Seems to be a custom memory location
         // where we can buffer data before sending it to the GPU.
@@ -173,13 +174,42 @@ struct BTrees {
                 gpuErrchk(cudaEventCreate(&start));
                 gpuErrchk(cudaEventCreate(&stop));
 
+                // Currently I include this translation layer as part of the batching. Maybe I shouldn't? It will include lots of moving memory to the GPU anyways.
+                gpuErrchk(cudaEventRecord(start, stream));
+
                 float t;
 
-                slab->moveBufferToGPU(batchData, stream);
-                gpuErrchk(cudaEventRecord(start, stream));
-                slab->diy_batch(batchData, ceil(index / 512.0), 512, stream);
+                // Convert the slab operations into the enum that the Btree understands. S
+                // see RequestTypes.hh for Slab, and global.cuh for Btree definitions
+                std::vector<OperationT> btree_ops;
+                btree_ops.reserve(index);
+                for (uint32_t i = 0; i < index; ++i) {
+                    // Check the key sizes in the meantime. This is test code, may want to remove later if we know the keysizes are ok.
+                    if (keys[i] > std::numeric_limits<unsigned int>::max()) {
+                        std::cerr << ">4B Key detected: " << keys[i] << std::endl;
+                        exit(132);
+                    }
+
+                    // Is the "Empty" slab operation the same as the NOP operation for the BTree?
+                    if (requests[i] == 0) {
+                        btree_ops[i] = OperationT::NOP;
+                    } else if (requests[i] == 1) {
+                        // Insert
+                        btree_ops[i] = OperationT::INSERT;
+                    } else if (requests[i] == 2) {
+                        // Query
+                        btree_ops[i] = OperationT::QUERY;
+                    } else if (requests[i] == 3) {
+                        // Delete
+                        btree_ops[i] = OperationT::DELETE;
+                    }
+                }
+
+                // TODO: Will need a way to pass through the streamId. Setting to zero is fine for now for only one GPU.
+                btree->diyConcurrentOperations(keys, values, btree_ops.data(), index);
+
+                // FIXME: This batching metric will also include lots of moving memory to the GPU. Not exactly useful.
                 gpuErrchk(cudaEventRecord(stop, stream));
-                slab->moveBufferToCPU(batchData, stream);
                 gpuErrchk(cudaStreamSynchronize(stream));
 
                 auto timestampWriteBack = std::chrono::high_resolution_clock::now();

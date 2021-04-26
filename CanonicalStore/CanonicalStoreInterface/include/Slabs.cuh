@@ -185,8 +185,7 @@ struct Slabs {
                 for (auto &[wbIndex, pBatchData] : writeBack) {
                     // Guessing idx is how many entries are in the BatchData
                     for (int i = 0; i < pBatchData->idx; ++i) {
-                        // FIXME: Where is handleInCache determined? Couldn't find in a cursory look through,
-                        //  But it's definitely set to true somewhere. (Maybe in GPU code?)
+                        // FIXME: Where is handleInCache determined? Is it not changed in the GPU code?
                         if (pBatchData->handleInCache[i]) {
                             timesGoingToCache++;
 
